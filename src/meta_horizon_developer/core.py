@@ -4,10 +4,8 @@ The dashboard owns authentication and builds persisted GraphQL requests.  This
 collector observes successful allow-listed Query responses; it never replays a
 request, exposes a cookie/token, or permits a Mutation.
 
-This module does not choose an `app_id` or storage location. The caller supplies the
-target application and locations through `load_settings()` arguments (or environment
-variables). Downstream handling such as DuckDB registration is outside this module's
-scope (ADR: meta-horizon-portable-collector).
+The caller supplies the target application and locations through `load_settings()`
+arguments or environment variables (ADR: meta-horizon-portable-collector).
 """
 
 from __future__ import annotations

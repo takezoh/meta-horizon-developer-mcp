@@ -1,9 +1,4 @@
-"""Read-only Meta Horizon Dashboard collector (CLI + MCP).
-
-The caller chooses the target application (`app_id`) and storage location. Downstream
-handling of collected aggregate values (such as DuckDB registration) is outside this
-package's responsibility.
-"""
+"""Read-only Meta Horizon Dashboard collector (CLI + MCP)."""
 
 from meta_horizon_developer.core import (
     AppIdMismatchError,

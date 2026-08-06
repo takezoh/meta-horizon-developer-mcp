@@ -3,18 +3,13 @@
 A **read-only** stdio MCP server for collecting **Analytics** from the Meta Horizon
 developer dashboard (`developers.meta.com/horizon`).
 
-The MCP server is the integration entry point for other projects. The bundled
-`meta-horizon-developer` CLI is for the **collection owner** only (manual authentication
-and scheduled collection).
+The bundled `meta-horizon-developer` CLI is for the **collection owner** only (manual
+authentication and scheduled collection).
 
 The collector opens the Analytics page in an authenticated browser, observes only
 successful persisted GraphQL `Query` responses issued by the Dashboard itself, removes
 secrets, and stores immutable JSON. It never constructs and replays requests, performs
 mutations, or fetches arbitrary URLs.
-
-The caller chooses the target application (`app_id`) and storage locations. Downstream
-handling of collected values (such as DuckDB registration) is outside this package's
-responsibility.
 
 ## Usage
 
@@ -43,9 +38,8 @@ Arguments can also be supplied through environment variables.
 
 ## MCP
 
-Start it as a stdio MCP server. Register it according to the host's conventions (through
-the gateway or directly in the host's MCP configuration). Only the executable path,
-`--app-id`, and `--snapshot-dir` are required.
+Start it as a stdio MCP server. Only the executable path, `--app-id`, and `--snapshot-dir`
+are required.
 
 ```json
 {

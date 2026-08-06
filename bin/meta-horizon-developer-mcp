@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve the package path by following the symlink from `~/.local/bin`.
-# Callers (such as mcp-gateway) only need to know
-# `${HOME}/.local/bin/meta-horizon-developer-mcp`; moving the package to another
-# repository does not require configuration changes beyond relinking this path.
+# Resolve the package path by following the entry-point symlink.
 SOURCE="$0"
 while [ -L "$SOURCE" ]; do
 	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
