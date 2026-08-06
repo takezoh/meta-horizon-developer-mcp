@@ -36,7 +36,6 @@ Arguments can also be supplied through environment variables.
 | `META_HORIZON_PROFILE_DIR` | `--profile-dir` |
 | `META_HORIZON_CSV_DIR` | `--csv-dir` |
 | `META_HORIZON_LOOKBACK_DAYS` | `--lookback-days` (default: 120) |
-| `META_HORIZON_STATE_DIR` | Parent of the three paths above (default: `./.state/meta-horizon-developer`) |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium executable |
 
 ## MCP
