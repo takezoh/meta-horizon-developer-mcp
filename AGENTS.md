@@ -48,4 +48,4 @@ the corresponding tests, and the snapshot/tool documentation together. Keep the 
 read-only and verify that operation names remain stable.
 
 When changing a CLI or MCP tool, update `README.md`, `ARCHITECTURE.md` when the flow or trust
-boundary changes, and the relevant tests. Keep user-facing text in English.
+boundary changes, and the relevant tests.
