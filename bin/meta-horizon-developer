@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 収集 owner が使う CLI (auth / collect / capture-csv)。パス解決は MCP 側と同じで、
-# `~/.local/bin` の symlink を辿ってパッケージの位置を求める。
+# CLI for the collection owner (auth / collect / capture-csv). Resolve the package path in
+# the same way as the MCP entry point by following the `~/.local/bin` symlink.
 SOURCE="$0"
 while [ -L "$SOURCE" ]; do
 	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"

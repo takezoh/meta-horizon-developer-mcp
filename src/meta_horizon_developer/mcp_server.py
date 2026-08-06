@@ -1,7 +1,8 @@
 """Read-only stdio MCP facade for the Meta Horizon collector.
 
-対象アプリと置き場は起動引数で決まる。認証、任意 URL、任意 operation、
-Mutation、Cookie/token の取得は公開しない (ADR: meta-horizon-portable-collector)。
+The target application and storage location come from startup arguments. Authentication,
+arbitrary URLs, arbitrary operations, mutations, and Cookie/token retrieval are not
+exposed (ADR: meta-horizon-portable-collector).
 """
 
 from __future__ import annotations
@@ -13,13 +14,14 @@ from mcp.server.fastmcp import FastMCP
 from meta_horizon_developer import core
 
 INSTRUCTIONS = (
-    "Meta Horizon Dashboard の集計データを読み取る。Mutation、任意URL、"
-    "Cookie/tokenの取得は提供しない。認証はホスト側の meta-horizon-developer auth で行う。"
+    "Read aggregate data from the Meta Horizon Dashboard. Mutations, arbitrary URLs, and "
+    "Cookie/token retrieval are not provided. Authentication is handled by the host-side "
+    "meta-horizon-developer auth command."
 )
 
 
 def build_server(settings: core.Settings) -> FastMCP:
-    """1 つの `Settings` に束縛した read-only サーバを組み立てる。"""
+    """Build a read-only server bound to one `Settings` instance."""
     mcp = FastMCP(
         f"meta-horizon-developer-{settings.app_id}",
         instructions=INSTRUCTIONS,
@@ -55,12 +57,14 @@ def build_server(settings: core.Settings) -> FastMCP:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="meta-horizon-developer-mcp",
-        description="Meta Horizon の集計値を読む read-only stdio MCP サーバ",
+        description="Read Meta Horizon aggregate values through a read-only stdio MCP server",
     )
-    parser.add_argument("--app-id", help="対象アプリの ID (既定: META_HORIZON_APP_ID)")
-    parser.add_argument("--snapshot-dir", help="読み取るスナップショットの置き場")
-    parser.add_argument("--profile-dir", help="Chromium の専用 profile")
-    parser.add_argument("--lookback-days", type=int, help="collect が渡す集計期間 (既定 120)")
+    parser.add_argument("--app-id", help="Target application ID (default: META_HORIZON_APP_ID)")
+    parser.add_argument("--snapshot-dir", help="Directory containing snapshots to read")
+    parser.add_argument("--profile-dir", help="Dedicated Chromium profile directory")
+    parser.add_argument(
+        "--lookback-days", type=int, help="Collection lookback period (default: 120)"
+    )
     return parser
 
 

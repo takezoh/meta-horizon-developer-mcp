@@ -9,7 +9,7 @@ APP_ID = "1234567890"
 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
-    """呼び出し元の環境変数に結果が左右されないようにする。"""
+    """Keep results independent of environment variables set by the caller."""
     for name in (
         "META_HORIZON_APP_ID",
         "META_HORIZON_OUTPUT_DIR",
@@ -68,7 +68,7 @@ def test_dashboard_contract_contains_only_read_queries_and_all_analytics_section
 
 
 def test_dashboard_contract_is_not_bound_to_one_application():
-    """許可リストは Dashboard の契約であり、どのアプリを見るかを含まない。"""
+    """The allowlist is the Dashboard contract and does not identify an application."""
     payload = json.loads(core._DASHBOARD_PATH.read_text(encoding="utf-8"))
 
     assert "app_id" not in payload
@@ -80,7 +80,7 @@ def test_load_settings_requires_an_app_id(tmp_path):
 
 
 def test_load_settings_requires_a_snapshot_dir(tmp_path):
-    """MCP は cwd が不定の状態で起動される。置き場に既定を持たせない。"""
+    """MCP starts with an unpredictable cwd, so storage locations have no default."""
     with pytest.raises(ValueError, match=r"--snapshot-dir is required"):
         core.load_settings(app_id=APP_ID, profile_dir=tmp_path)
 
@@ -145,7 +145,7 @@ def test_load_settings_rejects_required_outside_the_allowlist(tmp_path):
 
 
 def test_page_url_carries_the_custom_window_and_the_application(tmp_path):
-    """期間はプリセット (最長28日) ではなく URL のカスタム期間で渡す。"""
+    """Pass the period as a custom URL window rather than a preset (maximum 28 days)."""
     from datetime import date
 
     settings = _settings(tmp_path)
@@ -171,9 +171,10 @@ def test_redact_removes_secrets_recursively():
 
 
 def test_proxy_settings_splits_credentials_out_of_the_url():
-    """認証つきプロキシでは、URL 埋め込みのままだと Chromium が 407 で落ちる。
+    """Chromium returns 407 when proxy credentials remain embedded in the URL.
 
-    ユーザー名とパスワードを分けて渡すのが唯一の通し方なので、その形を固定する。
+    Passing the username and password separately is the only working form, so lock it
+    down here.
     """
     proxy = core.proxy_settings(
         {
@@ -184,7 +185,7 @@ def test_proxy_settings_splits_credentials_out_of_the_url():
 
     assert proxy == {
         "server": "http://localhost:3128",
-        # URL エンコードは戻してから渡す (そのままだと認証が通らない)
+        # Decode URL encoding before passing credentials; otherwise authentication fails.
         "username": "user@corp",
         "password": "p@ss",
         "bypass": "localhost,127.0.0.1",
@@ -192,7 +193,7 @@ def test_proxy_settings_splits_credentials_out_of_the_url():
 
 
 def test_proxy_settings_is_absent_without_configuration():
-    """プロキシの無い環境では None (直接接続のまま) にする。"""
+    """Return None without proxy configuration, preserving direct connection."""
     assert core.proxy_settings({}) is None
 
 
@@ -203,7 +204,7 @@ def test_proxy_settings_accepts_a_bare_host_and_no_credentials():
 
 
 def test_profile_lock_refuses_a_second_holder(tmp_path):
-    """profile は同時に 1 プロセスしか開けない。待たずに落とす。"""
+    """A profile can be opened by only one process; fail without waiting."""
     settings = _settings(tmp_path)
 
     with core.profile_lock(settings):
@@ -222,7 +223,7 @@ def test_profile_lock_is_reusable_after_release(tmp_path):
 
 
 def test_collect_refuses_a_directory_owned_by_another_application(tmp_path):
-    """1 ディレクトリ 1 アプリ。混ざると鮮度も欠損もアプリをまたいで合算される。"""
+    """One application per directory; mixing them combines freshness and missing data."""
     settings = _settings(tmp_path, app_id="111")
     _write_snapshot(settings, app_id="222")
 

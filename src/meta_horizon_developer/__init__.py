@@ -1,7 +1,8 @@
 """Read-only Meta Horizon Dashboard collector (CLI + MCP).
 
-対象アプリ (`app_id`) と保存先は呼び出し側が決める。取り込んだ集計値の
-下流での扱い (DuckDB 登録など) はこのパッケージの責務ではない。
+The caller chooses the target application (`app_id`) and storage location. Downstream
+handling of collected aggregate values (such as DuckDB registration) is outside this
+package's responsibility.
 """
 
 from meta_horizon_developer.core import (

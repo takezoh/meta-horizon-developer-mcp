@@ -1,6 +1,6 @@
-"""`meta-horizon-developer` コマンド。収集の owner が使う入口。
+"""`meta-horizon-developer` command used by the collection owner.
 
-読み取り専用。Mutation も任意 URL の取得も持たない。
+Read-only. It does not support mutations or fetching arbitrary URLs.
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ from typing import Any
 from meta_horizon_developer import core
 
 USAGE = """\
-meta-horizon-developer — Meta Horizon Dashboard の集計値を読み取り専用で収集する
+meta-horizon-developer — Collect Meta Horizon Dashboard aggregates in read-only mode
 
-  meta-horizon-developer status                     認証の有無と最新スナップショットの健全性
-  meta-horizon-developer auth                       専用ブラウザを開いて人手でログインする
-  meta-horizon-developer collect                    許可された Query を収集して不変 JSON へ保存
-  meta-horizon-developer capture-csv                チャート CSV を人手でダウンロードして保存
-  meta-horizon-developer read <operation>           最新スナップショットから 1 operation を読む
-  meta-horizon-developer migrate-profile --source D 既存の専用 profile を移設する
+  meta-horizon-developer status                     Show auth status and latest snapshot health
+  meta-horizon-developer auth                       Open the dedicated browser for manual login
+  meta-horizon-developer collect                    Collect allowed Queries into immutable JSON
+  meta-horizon-developer capture-csv                Manually download and save chart CSV files
+  meta-horizon-developer read <operation>           Read one operation from the latest snapshot
+  meta-horizon-developer migrate-profile --source D Move an existing dedicated profile
 
-対象アプリと置き場は --app-id / --snapshot-dir / --profile-dir で渡す
-(環境変数 META_HORIZON_APP_ID / _OUTPUT_DIR / _PROFILE_DIR でも可)。
+Pass the target application and locations with --app-id / --snapshot-dir / --profile-dir
+(or use the META_HORIZON_APP_ID / _OUTPUT_DIR / _PROFILE_DIR environment variables).
 """
 
 EXIT_OK = 0
@@ -53,19 +53,23 @@ def build_parser() -> argparse.ArgumentParser:
         description=USAGE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--app-id", help="対象アプリの ID (既定: META_HORIZON_APP_ID)")
-    parser.add_argument("--snapshot-dir", help="不変スナップショットの保存先")
-    parser.add_argument("--profile-dir", help="Chromium の専用 profile。cookie を含む")
-    parser.add_argument("--csv-dir", help="capture-csv の保存先")
-    parser.add_argument("--lookback-days", type=int, help="Dashboard へ渡す集計期間 (既定 120)")
+    parser.add_argument("--app-id", help="Target application ID (default: META_HORIZON_APP_ID)")
+    parser.add_argument("--snapshot-dir", help="Directory for immutable snapshots")
+    parser.add_argument(
+        "--profile-dir", help="Dedicated Chromium profile directory containing cookies"
+    )
+    parser.add_argument("--csv-dir", help="Directory for capture-csv output")
+    parser.add_argument(
+        "--lookback-days", type=int, help="Dashboard lookback period (default: 120)"
+    )
     sub = parser.add_subparsers(dest="action")
-    sub.add_parser("status", help="認証の有無と最新スナップショットの健全性")
-    sub.add_parser("auth", help="専用ブラウザを開いて人手でログインする")
-    sub.add_parser("collect", help="許可された Query を収集して不変 JSON へ保存する")
-    sub.add_parser("capture-csv", help="チャート CSV を人手でダウンロードして保存する")
-    read = sub.add_parser("read", help="最新スナップショットから 1 operation を読む")
+    sub.add_parser("status", help="Show auth status and latest snapshot health")
+    sub.add_parser("auth", help="Open the dedicated browser for manual login")
+    sub.add_parser("collect", help="Collect allowed Queries into immutable JSON")
+    sub.add_parser("capture-csv", help="Manually download and save chart CSV files")
+    read = sub.add_parser("read", help="Read one operation from the latest snapshot")
     read.add_argument("operation")
-    migrate = sub.add_parser("migrate-profile", help="既存の専用 profile を移設する")
+    migrate = sub.add_parser("migrate-profile", help="Move an existing dedicated profile")
     migrate.add_argument("--source", required=True)
     return parser
 
@@ -75,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = _settings(args)
     except (ValueError, KeyError, OSError) as exc:
-        print(f"設定が解決できない: {exc}", file=sys.stderr)
+        print(f"Could not resolve settings: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 
     try:

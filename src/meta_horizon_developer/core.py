@@ -4,9 +4,10 @@ The dashboard owns authentication and builds persisted GraphQL requests.  This
 collector observes successful allow-listed Query responses; it never replays a
 request, exposes a cookie/token, or permits a Mutation.
 
-このモジュールは `app_id` にも保存先にも依存しない。対象アプリと置き場は
-`load_settings()` の引数 (または環境変数) で呼び出し側が決める。DuckDB への
-登録のような下流の扱いはここには無い (ADR: meta-horizon-portable-collector)。
+This module does not choose an `app_id` or storage location. The caller supplies the
+target application and locations through `load_settings()` arguments (or environment
+variables). Downstream handling such as DuckDB registration is outside this module's
+scope (ADR: meta-horizon-portable-collector).
 """
 
 from __future__ import annotations
@@ -64,19 +65,19 @@ class Settings:
     output_dir: Path
     csv_dir: Path
     executable_path: str | None = None
-    # Dashboard へ渡す集計期間の長さ。既定 (28日) は分析側の収集窓 120 日に対して
-    # 短すぎ、期間推移がストア側だけ数期分しか描けなくなるため揃える。
+    # Dashboard lookback period. The default (28 days) is too short for the analytics
+    # collection window of 120 days, leaving only a few periods in the store.
     lookback_days: int = 120
 
 
 def _required(value: Path | str | None, env_name: str, flag: str) -> Path:
-    """置き場は必ず呼び出し側が決める。既定を持たない。
+    """Require the caller to choose a storage location; do not provide a default.
 
-    MCP サーバはホスト (gateway など) から**作業ディレクトリが不定の状態で**
-    起動される。cwd 起点の既定を持つと、profile やスナップショットが起動元次第で
-    別の場所に作られ、認証済み profile があるのに「ログイン画面へ飛ばされる」
-    という切り分けにくい失敗になる。ホーム配下の `~/.local/state` も
-    実行環境によっては書き込み不可なので既定にしない。
+    MCP servers are started by hosts (such as a gateway) with an unpredictable working
+    directory. A cwd-based default could create profiles or snapshots in different
+    places depending on the launcher, making an authenticated profile appear logged
+    out. `~/.local/state` may also be unwritable in some environments, so it is not a
+    default either.
     """
     resolved = value or os.environ.get(env_name)
     if not resolved:
@@ -94,11 +95,11 @@ def load_settings(
     lookback_days: int | None = None,
     executable_path: str | None = None,
 ) -> Settings:
-    """対象アプリと置き場を解決する。引数 > 環境変数 > 既定 の順。
+    """Resolve the target application and locations from arguments and environment.
 
-    `dashboard.json` は pages と operations だけを持つ **Dashboard の契約**であり、
-    どのアプリを見るかは含まない。画面構成はアプリによらず同じなので、
-    許可リストは全アプリで共有する。
+    `dashboard.json` contains only pages and operations: it is the **Dashboard contract**.
+    It does not identify an application. The page layout is shared by all applications,
+    so the allowlist is shared as well.
     """
     payload = json.loads(Path(dashboard_path or _DASHBOARD_PATH).read_text(encoding="utf-8"))
     operations = frozenset(payload["operations"])
@@ -114,7 +115,8 @@ def load_settings(
 
     output = _required(snapshot_dir, "META_HORIZON_OUTPUT_DIR", "--snapshot-dir")
     profile = _required(profile_dir, "META_HORIZON_PROFILE_DIR", "--profile-dir")
-    # CSV は復旧・値照合のときだけ使う補助なので、profile の隣を既定にしてよい。
+    # CSV is auxiliary output for recovery and value reconciliation, so default it next
+    # to the profile.
     csv = csv_dir or os.environ.get("META_HORIZON_CSV_DIR") or profile.parent / "csv"
     lookback = lookback_days or int(os.environ.get("META_HORIZON_LOOKBACK_DAYS", "120"))
     return Settings(
@@ -131,12 +133,13 @@ def load_settings(
 
 
 def page_url(settings: Settings, relative: str, *, today: date) -> str:
-    """集計期間を明示した Analytics ページの URL。
+    """Build an Analytics page URL with an explicit aggregation period.
 
-    Dashboard の期間は URL の `start` / `end` に載る。既定のプリセットは最長 28 日
-    しか選べないので、**カスタム期間を URL で渡して** より長い日次系列を出させる。
-    リクエストを組み立てて投げ直すのではなく、Dashboard 自身に発行させる点は変えない。
-    `end` に当日を渡すと、Dashboard は集計途中の当日を除いた前日までを返す。
+    The Dashboard encodes its period in the URL's `start` / `end` parameters. Its
+    default presets allow at most 28 days, so **pass a custom period in the URL** to
+    obtain a longer daily series. The Dashboard still issues the requests itself; this
+    collector does not construct and replay them. When `end` is today, the Dashboard
+    returns data through yesterday to exclude the incomplete current day.
     """
     start = today - timedelta(days=settings.lookback_days)
     query = urlencode({"start": start.isoformat(), "end": today.isoformat(), "preset": "custom"})
@@ -174,12 +177,12 @@ def _request_meta(request: Request) -> dict[str, str]:
 
 
 def proxy_settings(environ: dict[str, str] | None = None) -> dict[str, str] | None:
-    """環境変数の HTTP プロキシ設定を Playwright の形へ直す。
+    """Convert HTTP proxy environment settings to Playwright's format.
 
-    Chromium は URL に埋め込まれた認証情報を CONNECT に使わない。環境変数を
-    そのまま渡すと 407 が返り `ERR_TUNNEL_CONNECTION_FAILED` で全ページが
-    開けないので、**ユーザー名とパスワードを分けて渡す**。
-    プロキシが設定されていない環境では None を返す (既定の直接接続のまま)。
+    Chromium does not use credentials embedded in a URL for CONNECT. Passing the
+    environment value unchanged returns 407 and causes `ERR_TUNNEL_CONNECTION_FAILED`,
+    so **pass the username and password separately**. Return None when no proxy is set,
+    preserving the default direct connection.
     """
     env = os.environ if environ is None else environ
     raw = next(
@@ -203,26 +206,26 @@ def proxy_settings(environ: dict[str, str] | None = None) -> dict[str, str] | No
         proxy["password"] = unquote(parsed.password)
     bypass = env.get("NO_PROXY") or env.get("no_proxy")
     if bypass:
-        # Playwright は Chromium と同じくカンマ区切りを受ける
+        # Playwright accepts the same comma-separated format as Chromium.
         proxy["bypass"] = bypass
     return proxy
 
 
-# Cookie を OS キーリングではなく profile 内の basic store で扱う。
-# キーリングの無い headless / WSL 環境では、これを指定しないと Chromium が
-# 別の鍵を選び、**保存済みの cookie を 1 件も読めない**まま無言でログイン画面へ飛ぶ
-# (profile は壊れていないのに認証切れに見える)。
+# Store cookies in the profile's basic store instead of the OS keyring.
+# In headless / WSL environments without a keyring, omitting this flag makes Chromium
+# choose a different key and silently open the login page without reading any saved
+# cookies (the profile is intact but appears unauthenticated).
 _BROWSER_ARGS = ("--password-store=basic",)
 
 
 @contextmanager
 def profile_lock(settings: Settings) -> Generator[Path]:
-    """profile を排他ロックする。取れなければ即座に失敗する。
+    """Lock the profile exclusively and fail immediately if it is already locked.
 
-    Chromium の persistent profile は**同時に 1 プロセスしか開けない**。
-    複数プロジェクトから呼ばれうるため、排他の根拠を呼び出し側の cron
-    (`flock`) ではなくここに置く。ブロックせずに落とすのは、定期実行が
-    人手の `auth` を待って積み上がるのを避けるため。
+    A Chromium persistent profile can be opened by **only one process at a time**. Since
+    multiple projects may invoke this module, the lock belongs here rather than in the
+    caller's cron (`flock`). Failing without blocking prevents scheduled runs from
+    queueing behind a manual `auth` session.
     """
     settings.profile_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_path = settings.profile_dir.with_name(f"{settings.profile_dir.name}.lock")
@@ -243,10 +246,10 @@ def profile_lock(settings: Settings) -> Generator[Path]:
 
 
 def assert_app_id_matches(settings: Settings) -> None:
-    """snapshot-dir が別アプリのものなら失敗する。ディレクトリ単位で 1 アプリ。
+    """Fail when snapshot-dir belongs to another application; one app per directory.
 
-    混ざると staging の `app_id` 列だけが頼りになり、鮮度や欠損の集計が
-    アプリをまたいで合算される。**書く前に**止める。
+    Mixing applications would make freshness and missing-data aggregates span apps,
+    relying only on the staging `app_id` column. **Stop before writing** instead.
     """
     latest = latest_snapshot(settings)
     if not latest:
@@ -284,7 +287,7 @@ async def authenticate(settings: Settings | None = None) -> None:
             await page.goto(
                 BASE_URL.format(app_id=settings.app_id), wait_until="domcontentloaded"
             )
-            await asyncio.to_thread(input, "ログインとDashboard表示が完了したら Enter: ")
+            await asyncio.to_thread(input, "Press Enter after login and the Dashboard is visible: ")
         finally:
             await context.close()
             await playwright.stop()
@@ -398,7 +401,7 @@ async def capture_csv(settings: Settings | None = None) -> list[Path]:
                 BASE_URL.format(app_id=settings.app_id) + "analytics/",
                 wait_until="domcontentloaded",
             )
-            await asyncio.to_thread(input, "必要なCSVをダウンロードし、完了したら Enter: ")
+            await asyncio.to_thread(input, "Download the required CSV files, then press Enter: ")
             if tasks:
                 await asyncio.gather(*tuple(tasks))
         finally:

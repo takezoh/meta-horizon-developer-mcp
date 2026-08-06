@@ -1,48 +1,51 @@
 # meta-horizon-developer-mcp
 
-Meta Horizon の開発者ダッシュボード (developers.meta.com/horizon) の **Analytics** を
-読み取り専用で収集する stdio MCP サーバ。
+A **read-only** stdio MCP server for collecting **Analytics** from the Meta Horizon
+developer dashboard (`developers.meta.com/horizon`).
 
-他プロジェクトから使う入口は **MCP**。同梱の `meta-horizon-developer` CLI は
-**収集する owner だけ**が使う (人手の認証と cron の定期収集)。
+The MCP server is the integration entry point for other projects. The bundled
+`meta-horizon-developer` CLI is for the **collection owner** only (manual authentication
+and scheduled collection).
 
-認証済みブラウザで Analytics ページを開き、**Dashboard 自身が発行した** persisted
-GraphQL `Query` の成功応答だけを傍受し、秘匿値を落として不変 JSON へ保存する。
-リクエストを組み立てて投げ直さない。Mutation も任意 URL の取得も持たない。
+The collector opens the Analytics page in an authenticated browser, observes only
+successful persisted GraphQL `Query` responses issued by the Dashboard itself, removes
+secrets, and stores immutable JSON. It never constructs and replays requests, performs
+mutations, or fetches arbitrary URLs.
 
-対象アプリ (`app_id`) と保存先は呼び出し側が決める。収集した値の下流での扱い
-(DuckDB への登録など) はこのパッケージの責務ではない。
+The caller chooses the target application (`app_id`) and storage locations. Downstream
+handling of collected values (such as DuckDB registration) is outside this package's
+responsibility.
 
-## 使い方
+## Usage
 
 ```bash
-# 1. 人手でログインする (専用の Chromium profile に cookie が残る)
+# 1. Log in manually (cookies remain in the dedicated Chromium profile).
 meta-horizon-developer --app-id <APP_ID> --profile-dir .state/meta-horizon-developer/profile auth
 
-# 2. 収集する (cron 向け。不変 JSON を 1 ファイル書く)
+# 2. Collect data (cron-friendly; writes one immutable JSON file).
 meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store collect
 
-# 3. 状態を見る
+# 3. Check status.
 meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store status
 ```
 
-引数の代わりに環境変数でも渡せる。
+Arguments can also be supplied through environment variables.
 
-| 環境変数 | 対応する引数 |
+| Environment variable | Corresponding argument |
 |---|---|
 | `META_HORIZON_APP_ID` | `--app-id` |
 | `META_HORIZON_OUTPUT_DIR` | `--snapshot-dir` |
 | `META_HORIZON_PROFILE_DIR` | `--profile-dir` |
 | `META_HORIZON_CSV_DIR` | `--csv-dir` |
-| `META_HORIZON_LOOKBACK_DAYS` | `--lookback-days` (既定 120) |
-| `META_HORIZON_STATE_DIR` | 上記 3 つの既定の親 (既定 `./.state/meta-horizon-developer`) |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium の実行ファイル |
+| `META_HORIZON_LOOKBACK_DAYS` | `--lookback-days` (default: 120) |
+| `META_HORIZON_STATE_DIR` | Parent of the three paths above (default: `./.state/meta-horizon-developer`) |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium executable |
 
 ## MCP
 
-stdio MCP サーバとして起動する。ホストへの登録方法はホスト側の流儀に従う
-(gateway 経由でも、ホストの MCP 設定へ直接でもよい)。必要なのは実行ファイルの
-パスと `--app-id` / `--snapshot-dir` だけ。
+Start it as a stdio MCP server. Register it according to the host's conventions (through
+the gateway or directly in the host's MCP configuration). Only the executable path,
+`--app-id`, and `--snapshot-dir` are required.
 
 ```json
 {
@@ -55,32 +58,34 @@ stdio MCP サーバとして起動する。ホストへの登録方法はホス�
 }
 ```
 
-公開するツールは 4 つだけ。
+Only four tools are exposed:
 
-- `meta_horizon_developer_status` — 認証の有無と最新スナップショットの健全性
-- `meta_horizon_developer_collect` — 収集を実行する
-- `meta_horizon_developer_latest_snapshot` — 最新スナップショットのメタデータ (本体は返さない)
-- `meta_horizon_developer_read_operation` — 許可された Query を 1 件読む
+- `meta_horizon_developer_status` — authentication status and latest snapshot health
+- `meta_horizon_developer_collect` — run a collection
+- `meta_horizon_developer_latest_snapshot` — latest snapshot metadata (not its payload)
+- `meta_horizon_developer_read_operation` — read one allowed Query
 
-**認証・任意 URL・任意 operation・Mutation・Cookie/token は公開しない。**
-認証は人手が要るので CLI 側にだけ置く。
+**Authentication, arbitrary URLs, arbitrary operations, mutations, and Cookie/token values
+are never exposed.** Authentication is available only through the CLI because it requires
+human interaction.
 
-## 守っている前提
+## Invariants
 
-- **profile は同時に 1 プロセスしか開けない。** `auth` / `collect` / `capture-csv` は
-  排他ロックを取り、取れなければ待たずに `ProfileBusyError` で落ちる
-- **1 ディレクトリ 1 アプリ。** 別 `app_id` のスナップショットがある場所へは書かない
-  (`AppIdMismatchError`)
-- **`--password-store=basic` を必ず付ける。** キーリングの無い環境では Chromium が
-  別の鍵を選び、保存済み cookie を 1 件も復号できないまま「認証切れ」に見える
-- **プロキシは認証情報を分けて渡す。** URL に埋め込んだままだと Chromium は CONNECT に
-  使わず、407 → `ERR_TUNNEL_CONNECTION_FAILED` で全ページが開けない
-- **集計期間は URL の `start` / `end`。** プリセットは最長 28 日しか選べないため、
-  カスタム期間 (既定 120 日) を URL で渡して Dashboard により長い日次系列を出させる
-- **収集が 0 件なら空のスナップショットを残さず失敗する。** 部分欠損は
-  `missing_operations` / `missing_required_operations` に残す
+- **One process per profile.** `auth` / `collect` / `capture-csv` take an exclusive lock and
+  fail immediately with `ProfileBusyError` if it cannot be acquired.
+- **One application per directory.** Never write snapshots for a different `app_id` into
+  a directory that already contains snapshots (`AppIdMismatchError`).
+- **Always pass `--password-store=basic`.** Without a keyring, Chromium may select another
+  key and appear unauthenticated because it cannot decrypt any saved cookies.
+- **Separate proxy credentials.** Chromium does not use credentials embedded in a proxy URL
+  for CONNECT; passing them that way results in 407 and `ERR_TUNNEL_CONNECTION_FAILED`.
+- **The aggregation period comes from URL `start` / `end`.** Presets allow at most 28 days,
+  so a custom period (default: 120 days) is passed to the Dashboard to produce a longer
+  daily series.
+- **Fail when collection captures zero operations.** Do not leave an empty snapshot. Partial
+  gaps are recorded in `missing_operations` / `missing_required_operations`.
 
-## スナップショットの形
+## Snapshot format
 
 ```json
 {
@@ -94,15 +99,15 @@ stdio MCP サーバとして起動する。ホストへの登録方法はホス�
 }
 ```
 
-ファイル名は `meta-store-<UTC>.json`、権限は 0600。**上書きしない**。
+Files are named `meta-store-<UTC>.json`, mode 0600, and are **never overwritten**.
 
-`dashboard.json` は収集対象の Dashboard ページと許可 operation の一覧
-(= Dashboard の契約) であり、どのアプリを見るかは含まない。画面構成はアプリに
-よらず同じなので、この許可リストは全アプリで共有する。
+`dashboard.json` is the contract for the Dashboard pages and allowed operations; it does
+not identify an application. The page layout is shared across applications, so this
+allowlist is shared as well.
 
-## 秘匿値
+## Secrets
 
-- cookie は専用 profile にだけ残る。設定ファイルにもスナップショットにも書かない
-- 応答は保存前に redact する (authorization / cookie / token / session / email /
-  user_id / dtsg など)
-- profile とスナップショットは **git 管理下へ置かない**
+- Cookies remain only in the dedicated profile; they are not written to configuration or snapshots.
+- Responses are redacted before storage (authorization / cookie / token / session / email /
+  user_id / dtsg and similar fields).
+- Profiles and snapshots must never be committed to Git.
