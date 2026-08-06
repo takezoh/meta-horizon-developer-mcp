@@ -20,11 +20,13 @@ scope:
 - 'src/meta_horizon_developer/cli.py (new: meta-horizon-developer command)'
 - 'src/meta_horizon_developer/mcp_server.py (new: read-only stdio MCP)'
 - 'src/meta_horizon_developer/dashboard.json (new: Dashboard contract without app_id)'
-- 'bin/meta-horizon-developer, bin/meta-horizon-developer-mcp (new: path-resolving launchers)'
+- 'bin/meta-horizon-developer (new: path-resolving launcher for the CLI)'
+- 'bin/meta-horizon-developer-mcp (new: path-resolving launcher for the MCP server)'
 - 'tests/test_core.py (new: engine tests)'
-- 'README.md, AGENTS.md, ARCHITECTURE.md (new: usage, maintenance, and implementation docs)'
-- 'docs/.docs-config.yaml, docs/.gitignore, docs/.transition-table.yaml, docs/aliases.yaml, docs/schemas/** (new: dev-docs init scaffolding for this package)'
-- 'docs/adr/adr-20260806-meta-horizon-portable-collector.md (translated to English)'
+- 'README.md (new: usage docs)'
+- 'AGENTS.md (new: maintainer docs)'
+- 'ARCHITECTURE.md (new: implementation and trust-boundary docs)'
+- 'docs/** (dev-docs init scaffolding, plus the translated ADR and change package for this change)'
 non_goals:
 - Caller-side (data-analysis) adaptation — turning DuckDB registration into a thin wrapper, injecting default paths, and maintaining staging/mart are changes on the data-analysis repository side
 - Registration with mcp-gateway (an agent-module responsibility; the gateway decides the published name and how tools appear)
