@@ -3,6 +3,9 @@
 A **read-only** stdio MCP server for collecting **Analytics** from the Meta Horizon
 developer dashboard (`developers.meta.com/horizon`).
 
+For package structure and trust boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md). For
+development and change rules, see [`AGENTS.md`](AGENTS.md).
+
 The bundled `meta-horizon-developer` CLI is for the **collection owner** only (manual
 authentication and scheduled collection).
 
@@ -105,3 +108,12 @@ allowlist is shared as well.
 - Responses are redacted before storage (authorization / cookie / token / session / email /
   user_id / dtsg and similar fields).
 - Profiles and snapshots must never be committed to Git.
+
+## Development
+
+```bash
+uv run --project . pytest -q
+uv run --project . ruff check src tests
+```
+
+The package requires Python 3.13 or newer. Runtime state is intentionally excluded from Git.
