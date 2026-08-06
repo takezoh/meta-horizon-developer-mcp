@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 収集 owner が使う CLI (auth / collect / capture-csv)。パス解決は MCP 側と同じで、
+# `~/.local/bin` の symlink を辿ってパッケージの位置を求める。
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+	SOURCE="$(readlink "$SOURCE")"
+	[[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+PACKAGE_DIR="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+exec uv run --project "$PACKAGE_DIR" python -m meta_horizon_developer.cli "$@"

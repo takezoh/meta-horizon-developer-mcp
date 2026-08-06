@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# `~/.local/bin` からの symlink を辿ってパッケージの位置を解決する。
+# 呼び出し側 (mcp-gateway など) は `${HOME}/.local/bin/meta-horizon-developer-mcp`
+# だけを知っていればよく、**パッケージを別リポジトリへ移しても symlink を
+# 張り替えるだけ**で設定を変えなくてよい。
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+	SOURCE="$(readlink "$SOURCE")"
+	[[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+PACKAGE_DIR="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+exec uv run --project "$PACKAGE_DIR" python -m meta_horizon_developer.mcp_server "$@"

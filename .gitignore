@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Runtime state can contain browser credentials and collected snapshots.
+.state/
+data/
+
+# Local agent/editor state.
+.claude/
+.idea/
+.vscode/
