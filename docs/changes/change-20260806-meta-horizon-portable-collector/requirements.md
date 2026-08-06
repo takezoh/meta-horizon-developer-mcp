@@ -26,9 +26,10 @@ and mcp.
 
 ### FR-003 — No default storage location
 
-The storage locations (snapshot / profile) must always be supplied via
-argument or environment variable, and **must not have a default rooted at
-the working directory**. Since the MCP server is started by the host with an
+The snapshot location must always be supplied via argument or environment
+variable, and **must not have a default rooted at the working directory**.
+The profile must be required only by the browser entry points (`auth` /
+`collect` / `capture-csv`); reading a snapshot must resolve without one. Since the MCP server is started by the host with an
 unpredictable cwd, having a default would mean the profile ends up in a
 different location depending on the launcher, producing the failure mode of
 being redirected to a login screen despite already being authenticated. Only
@@ -50,9 +51,11 @@ single byte**.
 
 ### FR-006 — MCP's exposed surface
 
-The MCP server must take the target app and storage location via startup
-arguments, and must expose only the 4 tools corresponding to `status` /
-`collect` / `latest_snapshot` / `read_operation`. It must not expose
+The MCP server must take **no startup arguments**: each tool must receive its
+target app and storage location as parameters, so that one process serves every
+application and the launching host needs no knowledge of its callers. It must
+expose only the 4 tools corresponding to `status` / `collect` /
+`latest_snapshot` / `read_operation`. It must not expose
 authentication, fetching arbitrary URLs, operations outside the allowlist,
 Mutations, or cookie/token retrieval. This package must not decide how it is
 registered with hosts or under what public name.

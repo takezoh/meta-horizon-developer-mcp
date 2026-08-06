@@ -27,39 +27,47 @@ meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store coll
 meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store status
 ```
 
-Arguments can also be supplied through environment variables.
+CLI arguments can also be supplied through environment variables.
 
-| Environment variable | Corresponding argument |
-|---|---|
-| `META_HORIZON_APP_ID` | `--app-id` |
-| `META_HORIZON_OUTPUT_DIR` | `--snapshot-dir` |
-| `META_HORIZON_PROFILE_DIR` | `--profile-dir` |
-| `META_HORIZON_CSV_DIR` | `--csv-dir` |
-| `META_HORIZON_LOOKBACK_DAYS` | `--lookback-days` (default: 120) |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium executable |
+| Environment variable | Corresponding argument | Needed for |
+|---|---|---|
+| `META_HORIZON_APP_ID` | `--app-id` | everything |
+| `META_HORIZON_OUTPUT_DIR` | `--snapshot-dir` | everything |
+| `META_HORIZON_PROFILE_DIR` | `--profile-dir` | `auth` / `collect` / `capture-csv` |
+| `META_HORIZON_CSV_DIR` | `--csv-dir` | `capture-csv` (defaults next to the profile) |
+| `META_HORIZON_LOOKBACK_DAYS` | `--lookback-days` (default: 120) | `collect` |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium executable | browser operations |
+
+Reading a snapshot never needs a profile: `status` and `read` resolve without one.
 
 ## MCP
 
-Start it as a stdio MCP server. Only the executable path, `--app-id`, and `--snapshot-dir`
-are required.
+Start it as a stdio MCP server. **It takes no startup arguments.** The target
+application and storage location are tool arguments, so one process serves every
+application and the host that launches it needs no knowledge of its callers.
 
 ```json
 {
   "mcpServers": {
     "meta-horizon-developer": {
-      "command": "/path/to/.venv/bin/meta-horizon-developer-mcp",
-      "args": ["--app-id", "<APP_ID>", "--snapshot-dir", "/path/to/data/raw/meta-store"]
+      "command": "/path/to/bin/meta-horizon-developer-mcp"
     }
   }
 }
 ```
 
+Splitting the server per application would isolate nothing: every instance opens the
+same Chromium profile and the same cookies, so the only thing separated is `app_id`,
+which is not a secret.
+
 Only four tools are exposed:
 
-- `meta_horizon_developer_status` — authentication status and latest snapshot health
-- `meta_horizon_developer_collect` — run a collection
-- `meta_horizon_developer_latest_snapshot` — latest snapshot metadata (not its payload)
-- `meta_horizon_developer_read_operation` — read one allowed Query
+| Tool | Arguments | Returns |
+|---|---|---|
+| `meta_horizon_developer_status` | `app_id`, `snapshot_dir` | latest snapshot health |
+| `meta_horizon_developer_collect` | `app_id`, `snapshot_dir`, `profile_dir`, `lookback_days?` | runs a collection |
+| `meta_horizon_developer_latest_snapshot` | `app_id`, `snapshot_dir` | snapshot metadata (not its payload) |
+| `meta_horizon_developer_read_operation` | `operation_name`, `app_id`, `snapshot_dir` | one allowed Query |
 
 **Authentication, arbitrary URLs, arbitrary operations, mutations, and Cookie/token values
 are never exposed.** Authentication is available only through the CLI because it requires

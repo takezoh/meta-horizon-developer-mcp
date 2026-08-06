@@ -42,11 +42,11 @@ which only want to collect are not forced to depend on DuckDB.
 | Aspect | Before extraction | Now |
 |---|---|---|
 | Allowlist | endpoints JSON bundled with `app_id` | `dashboard.json` (no app_id, `schema_version: 2`) |
-| Config resolution | storage location fixed relative to the caller repository's root | `app_id` / `snapshot_dir` / `profile_dir` are required inputs. No default rooted at cwd |
+| Config resolution | storage location fixed relative to the caller repository's root | `app_id` / `snapshot_dir` are required inputs; the profile is required only by browser operations. No default rooted at cwd |
 | Exclusion | only the cron script's `flock` | `core.profile_lock()` (non-blocking). Cron's `flock` remains as a secondary guard against redundant launches |
 | app_id contamination | unguarded | `assert_app_id_matches()` rejects it at the start of `collect` |
 | Empty collection | wrote and registered a snapshot, then deleted it and raised `RuntimeError` | `EmptyCollectionError`. **Leaves not a single byte behind** |
-| MCP | fixed to one app via a module constant | bound via `build_server(settings)`. Switchable via startup arguments |
+| MCP | fixed to one app via a module constant | one process for every app; `app_id` and the snapshot directory are tool arguments |
 | Exceptions | `RuntimeError` / `ValueError` | under `MetaHorizonError` (`ProfileBusyError` / `AppIdMismatchError` / `EmptyCollectionError`). All still inherit from `RuntimeError`, so existing catches keep working |
 
 ## Caller-side (data-analysis) adaptation

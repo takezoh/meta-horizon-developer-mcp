@@ -15,11 +15,11 @@ own (UD-001 in change.md).
 
 | Gate | Result |
 |---|---|
-| `uv run python -m pytest` | **923 passed** (0 failures; 23 of these are this package's tests) |
+| `uv run --project . pytest -q` | **25 passed** (0 failures) |
 | `uv run ruff check` | **All checks passed** (same result standalone as a package) |
 | `uv sync` | resolved and installed as a workspace member |
 
-## Test breakdown (`tests/test_core.py`, 23 cases)
+## Test breakdown (`tests/test_core.py`, 25 cases)
 
 None connect to a real browser or real data.
 
@@ -27,7 +27,8 @@ None connect to a real browser or real data.
 - **`dashboard.json` has no `app_id`** (directly pins the counterexample for FR-001)
 - Fails when `app_id` is unspecified / falls back to env / argument takes
   precedence over env
-- **Fails when `--snapshot-dir` and `--profile-dir` are unspecified** (no
+- **Fails when the snapshot directory is unspecified**, while reads resolve
+  without a profile and browser operations reject a missing one (no
   default rooted at cwd)
 - `--csv-dir` defaults to next to the profile
 - Allowlist validation (rejects non-Query, rejects required outside the set)

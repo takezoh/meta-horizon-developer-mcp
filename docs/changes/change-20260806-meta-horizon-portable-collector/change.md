@@ -12,7 +12,7 @@ outcomes:
 - Chromium profile exclusion is guaranteed in code and cannot be opened concurrently regardless of which host calls it
 - If a different app_id is mixed into the same snapshot-dir, collect fails and the contamination is detected
 - The storage location has no default rooted at the working directory, so the profile stays fixed even under MCP startup where cwd is unpredictable
-- The MCP server can switch its target app via startup arguments (--app-id / --snapshot-dir), while the published tools remain the same 4 read-only ones
+- The MCP server takes no startup arguments; each tool receives its target app and snapshot directory, so one process serves every application and the launching host stays free of caller configuration. The published tools remain the same 4 read-only ones
 - It can be referenced as a submodule from mcp-gateway's servers/ as a standalone repository
 scope:
 - 'pyproject.toml (new: standalone package definition)'

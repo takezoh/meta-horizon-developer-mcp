@@ -59,9 +59,11 @@ class Settings:
     pages: tuple[str, ...]
     operations: frozenset[str]
     required_operations: frozenset[str]
-    profile_dir: Path
+    # Browser-only locations. Reading snapshots does not need them, so they are
+    # optional; the browser entry points reject None explicitly.
+    profile_dir: Path | None
     output_dir: Path
-    csv_dir: Path
+    csv_dir: Path | None
     executable_path: str | None = None
     # Dashboard lookback period. The default (28 days) is too short for the analytics
     # collection window of 120 days, leaving only a few periods in the store.
@@ -112,19 +114,23 @@ def load_settings(
         raise ValueError("app_id is required (pass --app-id or set META_HORIZON_APP_ID)")
 
     output = _required(snapshot_dir, "META_HORIZON_OUTPUT_DIR", "--snapshot-dir")
-    profile = _required(profile_dir, "META_HORIZON_PROFILE_DIR", "--profile-dir")
+    # The profile is only needed to drive a browser. Status and read paths resolve
+    # without it, which is what lets one server serve several applications.
+    profile_value = profile_dir or os.environ.get("META_HORIZON_PROFILE_DIR")
+    profile = Path(profile_value) if profile_value else None
     # CSV is auxiliary output for recovery and value reconciliation, so default it next
     # to the profile.
-    csv = csv_dir or os.environ.get("META_HORIZON_CSV_DIR") or profile.parent / "csv"
+    csv_value = csv_dir or os.environ.get("META_HORIZON_CSV_DIR")
+    csv = Path(csv_value) if csv_value else (profile.parent / "csv" if profile else None)
     lookback = lookback_days or int(os.environ.get("META_HORIZON_LOOKBACK_DAYS", "120"))
     return Settings(
         app_id=str(resolved_app_id),
         pages=tuple(payload["pages"]),
         operations=operations,
         required_operations=required,
-        profile_dir=Path(profile),
+        profile_dir=profile,
         output_dir=Path(output),
-        csv_dir=Path(csv),
+        csv_dir=csv,
         executable_path=executable_path or os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
         lookback_days=lookback,
     )
@@ -216,6 +222,16 @@ def proxy_settings(environ: dict[str, str] | None = None) -> dict[str, str] | No
 _BROWSER_ARGS = ("--password-store=basic",)
 
 
+def _require_profile(settings: Settings) -> Path:
+    """Browser operations need a profile; reading snapshots does not."""
+    if settings.profile_dir is None:
+        raise ValueError(
+            "--profile-dir is required for auth / collect / capture-csv "
+            "(or set META_HORIZON_PROFILE_DIR)"
+        )
+    return settings.profile_dir
+
+
 @contextmanager
 def profile_lock(settings: Settings) -> Generator[Path]:
     """Lock the profile exclusively and fail immediately if it is already locked.
@@ -225,15 +241,16 @@ def profile_lock(settings: Settings) -> Generator[Path]:
     caller's cron (`flock`). Failing without blocking prevents scheduled runs from
     queueing behind a manual `auth` session.
     """
-    settings.profile_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock_path = settings.profile_dir.with_name(f"{settings.profile_dir.name}.lock")
+    profile = _require_profile(settings)
+    profile.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = profile.with_name(f"{settings.profile_dir.name}.lock")
     handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise ProfileBusyError(
-                f"browser profile is already in use: {settings.profile_dir}"
+                f"browser profile is already in use: {profile}"
             ) from exc
         try:
             yield lock_path
@@ -261,10 +278,11 @@ def assert_app_id_matches(settings: Settings) -> None:
 
 
 async def _context(settings: Settings, *, headless: bool) -> tuple[Any, BrowserContext]:
-    settings.profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    profile = _require_profile(settings)
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     playwright = await async_playwright().start()
     context = await playwright.chromium.launch_persistent_context(
-        settings.profile_dir,
+        profile,
         headless=headless,
         accept_downloads=True,
         viewport={"width": 1440, "height": 1000},
@@ -369,6 +387,8 @@ async def collect(settings: Settings | None = None) -> Path:
 async def capture_csv(settings: Settings | None = None) -> list[Path]:
     """Save chart CSV Blob downloads while a human operates the dashboard."""
     settings = settings or load_settings()
+    if settings.csv_dir is None:
+        raise ValueError("--csv-dir or --profile-dir is required for capture-csv")
     batch = settings.csv_dir / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     batch.mkdir(parents=True, exist_ok=False, mode=0o700)
     saved: list[Path] = []
@@ -439,8 +459,10 @@ def status(settings: Settings | None = None) -> dict[str, Any]:
     payload = json.loads(latest.read_text(encoding="utf-8")) if latest else None
     return {
         "app_id": settings.app_id,
-        "authenticated_profile_present": settings.profile_dir.exists(),
-        "profile_dir": str(settings.profile_dir),
+        "authenticated_profile_present": bool(
+            settings.profile_dir and settings.profile_dir.exists()
+        ),
+        "profile_dir": str(settings.profile_dir) if settings.profile_dir else None,
         "snapshot_dir": str(settings.output_dir),
         "latest_snapshot": str(latest) if latest else None,
         "collected_at": payload.get("collected_at") if payload else None,

@@ -85,9 +85,36 @@ def test_load_settings_requires_a_snapshot_dir(tmp_path):
         core.load_settings(app_id=APP_ID, profile_dir=tmp_path)
 
 
-def test_load_settings_requires_a_profile_dir(tmp_path):
+def test_reading_resolves_without_a_profile(tmp_path):
+    """One server serves several applications, so reads must not demand a profile.
+
+    Cookies live in a single profile regardless of how many processes exist, so binding
+    a server to one application would isolate nothing but `app_id`, which is not secret.
+    """
+    settings = core.load_settings(app_id=APP_ID, snapshot_dir=tmp_path)
+
+    assert settings.profile_dir is None
+    assert settings.csv_dir is None
+
+
+def test_status_works_without_a_profile(tmp_path):
+    settings = core.load_settings(app_id=APP_ID, snapshot_dir=tmp_path)
+    _write_snapshot(settings, app_id=APP_ID)
+
+    result = core.status(settings)
+
+    assert result["authenticated_profile_present"] is False
+    assert result["profile_dir"] is None
+    assert result["operation_count"] == 1
+
+
+def test_browser_operations_require_a_profile(tmp_path):
+    """auth / collect / capture-csv drive a browser and cannot proceed without one."""
+    settings = core.load_settings(app_id=APP_ID, snapshot_dir=tmp_path)
+
     with pytest.raises(ValueError, match=r"--profile-dir is required"):
-        core.load_settings(app_id=APP_ID, snapshot_dir=tmp_path)
+        with core.profile_lock(settings):
+            pass
 
 
 def test_csv_dir_defaults_next_to_the_profile(tmp_path):

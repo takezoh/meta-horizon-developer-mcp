@@ -10,7 +10,8 @@ The package provides two entry points:
 - `meta-horizon-developer`: an owner-operated CLI for login, collection, CSV capture, and
   snapshot inspection.
 - `meta-horizon-developer-mcp`: a read-only stdio MCP server exposing the four tools defined
-  in `src/meta_horizon_developer/mcp_server.py`.
+  in `src/meta_horizon_developer/mcp_server.py`. It takes no startup arguments; each tool
+  receives its target application and snapshot directory as parameters.
 
 The collector observes successful, allow-listed GraphQL Query responses emitted by the
 Dashboard. It does not construct or replay requests.
@@ -21,8 +22,12 @@ Dashboard. It does not construct or replay requests.
   authentication flows, or cookie/token values are exposed.
 - `dashboard.json` is the allowlist. Every operation must end in `Query`; required operations
   must be a subset of the allowlist.
-- `app_id`, profile, and snapshot locations are explicit inputs or environment variables.
-  Do not add a cwd-dependent default.
+- `app_id` and the snapshot directory are explicit inputs or environment variables.
+  Do not add a cwd-dependent default. The profile is required only by the browser entry
+  points (`auth` / `collect` / `capture-csv`); do not make read paths depend on it.
+- Do not bind a server process to one application. Every instance shares the same profile
+  and cookies, so per-application processes isolate nothing but `app_id`, and they force
+  the launching host to know its callers' configuration.
 - A profile is single-process and a snapshot directory belongs to one application. Preserve
   the lock and app-id guard before changing collection behavior.
 - Responses are redacted before they are written or returned. Never add credentials to

@@ -56,13 +56,20 @@ registration and default-value injection on the caller side.**
    `app_id` is supplied as a required CLI/MCP argument, or via
    `META_HORIZON_APP_ID`. Since the Dashboard's screen layout is the same
    regardless of app, **the allowlist is shared across all apps**.
-3. **The caller decides where things live.** `--snapshot-dir` /
-   `--profile-dir` / `--csv-dir` are taken as arguments. **There is no
-   default rooted at the working directory** — since the MCP server is
-   started by the host with an unpredictable cwd, having a default would mean
-   the profile ends up in a different location depending on the launcher,
-   producing the failure mode of being redirected to a login screen despite
-   already being authenticated.
+3. **The caller decides where things live.** The snapshot directory, profile, and
+   CSV directory are taken as arguments. **There is no default rooted at the
+   working directory** — since the MCP server is started by the host with an
+   unpredictable cwd, having a default would mean the profile ends up in a
+   different location depending on the launcher, producing the failure mode of
+   being redirected to a login screen despite already being authenticated.
+   The profile is required only by the browser entry points, so reads resolve
+   without one.
+   Accordingly the MCP server takes **no startup arguments**: each tool receives
+   its target `app_id` and snapshot directory as parameters. Binding a process
+   per application would isolate nothing — every instance opens the same Chromium
+   profile and the same cookies, so the only thing separated is `app_id`, which is
+   not a secret — while forcing the launching host to carry its callers'
+   configuration.
 4. **`collect` rejects `app_id` contamination.** If a snapshot for a
    different `app_id` already exists in the same snapshot-dir, collection
    fails. One app per directory.

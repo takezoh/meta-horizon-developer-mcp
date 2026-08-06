@@ -24,13 +24,18 @@ src/meta_horizon_developer/
 ```
 
 Both wrappers resolve the package directory and invoke the Python module with `uv`. The
-runtime code is shared; the CLI owns human interaction, while the MCP facade binds one
-`Settings` object and exposes only read operations.
+runtime code is shared; the CLI owns human interaction, while the MCP facade takes the
+target application and storage location **per call** and exposes only read operations.
+A single process therefore serves every application: binding one server per application
+would separate only `app_id`, since all instances share one Chromium profile and its
+cookies.
 
 ## Data flow
 
-1. `load_settings()` resolves `app_id`, profile, snapshot, CSV, and lookback paths from
-   explicit arguments or environment variables. It loads and validates `dashboard.json`.
+1. `load_settings()` resolves `app_id`, snapshot, profile, CSV, and lookback values from
+   explicit arguments or environment variables, and validates `dashboard.json`. `app_id`
+   and the snapshot directory are always required; the profile is required only by the
+   browser entry points, so reads resolve without one.
 2. `profile_lock()` creates a 0600 lock beside the profile and rejects concurrent use.
 3. Playwright opens the persistent profile with `--password-store=basic` and the optional
    proxy settings.
@@ -50,7 +55,7 @@ they require a human browser session or a download interaction.
 | Dashboard → collector | Observe successful allow-listed responses; never replay or synthesize requests. |
 | Browser profile → filesystem | Keep cookies in the dedicated profile; use basic password storage and mode 0700 directories. |
 | Response → snapshot/MCP | Redact secret and identity keys before persistence or return. |
-| Caller → settings | Require explicit application and storage paths; reject cross-application snapshot directories. |
+| Caller → settings | Require an explicit application and snapshot directory per call; reject cross-application snapshot directories. |
 | Snapshot → reader | Read only known operations from the latest redacted snapshot; never expose the whole raw payload through MCP. |
 
 ## Extension rules
