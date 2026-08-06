@@ -49,9 +49,3 @@ read-only and verify that operation names remain stable.
 
 When changing a CLI or MCP tool, update `README.md`, `ARCHITECTURE.md` when the flow or trust
 boundary changes, and the relevant tests. Keep user-facing text in English.
-
-## Submodule workflow
-
-This repository is itself managed as a submodule by `mcp-gateway`. Commit package changes in
-this repository first, then update the parent repository's gitlink. Do not commit runtime
-state or credentials. Pushes require explicit approval.
