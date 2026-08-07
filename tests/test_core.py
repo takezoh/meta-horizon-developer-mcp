@@ -67,6 +67,114 @@ def test_dashboard_contract_contains_only_read_queries_and_all_analytics_section
     } == set(settings.pages)
 
 
+def test_reviews_are_collected_by_scrolling_and_not_as_a_period_page(tmp_path):
+    """Reviews carry no period parameter, so they are not one of the analytics pages."""
+    settings = _settings(tmp_path)
+
+    reviews = next(page for page in settings.scroll_pages if page.path == "reviews/")
+
+    assert reviews.operation == "OCDevManageApplicationReviewsTableQuery"
+    assert reviews.connection == ("node", "user_reviews2")
+    assert "reviews/" not in settings.pages
+
+
+def test_scrolled_operations_must_be_allow_listed(tmp_path):
+    dashboard = tmp_path / "dashboard.json"
+    dashboard.write_text(
+        json.dumps(
+            {
+                "pages": ["analytics/"],
+                "operations": ["GoodQuery"],
+                "scroll_pages": [
+                    {"path": "reviews/", "operation": "AbsentQuery", "connection": ["node"]}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="must be allow-listed"):
+        core.load_settings(app_id=APP_ID, dashboard_path=dashboard, snapshot_dir=tmp_path)
+
+
+def test_reviews_are_not_required_so_a_missing_table_cannot_block_analytics(tmp_path):
+    """Reviews are a diagnostic surface; losing them must not fail an analytics run."""
+    settings = _settings(tmp_path)
+
+    assert "OCDevManageApplicationReviewsTableQuery" not in settings.required_operations
+
+
+def test_review_node_drops_the_author_and_keeps_the_review(tmp_path):
+    """The author names a person and no secret-key pattern would catch `alias` / `id`."""
+    row = core.review_node(
+        {
+            "id": "1086229280595890",
+            "author": {"alias": "Astra_Zeneki", "id": "104037732148388"},
+            "date": 1786041310,
+            "score": 5,
+            "review_title": "great",
+            "review_description": "very fun",
+            "review_helpful_count": 1,
+            "is_down_ranked": False,
+            "developer_tags": [],
+            "moderation_request": None,
+            "developer_response": {"body": "Thanks for playing!"},
+            "rated_binary": {
+                "version": "0.1.10283",
+                "binary_application": {"organization": {"viewer_permissions": ["KEYS"]}},
+            },
+        }
+    )
+
+    assert "author" not in row
+    assert "Astra_Zeneki" not in json.dumps(row)
+    assert "104037732148388" not in json.dumps(row)
+    # The permission list is repeated on every row and describes the viewer, not the review.
+    assert "KEYS" not in json.dumps(row)
+    assert row["score"] == 5
+    assert row["description"] == "very fun"
+    assert row["app_version"] == "0.1.10283"
+    assert row["developer_response"] == "Thanks for playing!"
+
+
+def test_absorb_merges_pages_and_deduplicates_rows():
+    """A scrolled table arrives as many responses; keeping only the last would lose rows."""
+    scroll = core.ScrollPage(
+        path="reviews/", operation="ReviewsQuery", connection=("node", "user_reviews2")
+    )
+    state: dict = {}
+
+    def response(ids: list[str], has_next: bool) -> dict:
+        return {
+            "data": {
+                "node": {
+                    "user_reviews2": {
+                        "edges": [{"node": {"id": i, "date": int(i), "score": 5}} for i in ids],
+                        "page_info": {"has_next_page": has_next},
+                    }
+                }
+            }
+        }
+
+    core._absorb(state, scroll, response(["1", "2"], True), "doc")
+    core._absorb(state, scroll, response(["2", "3"], False), "doc")
+
+    assert set(state["ReviewsQuery"]["rows"]) == {"1", "2", "3"}
+    assert state["ReviewsQuery"]["has_next_page"] is False
+    assert state["ReviewsQuery"]["responses"] == 2
+
+
+def test_scrolled_row_counts_expose_a_short_collection():
+    payload = {
+        "operations": [
+            {"name": "ReviewsQuery", "data": {"rows": [{"id": "1"}, {"id": "2"}]}},
+            {"name": "OtherQuery", "data": {"node": {}}},
+        ]
+    }
+
+    assert core.scrolled_row_counts(payload) == {"ReviewsQuery": 2}
+
+
 def test_dashboard_contract_is_not_bound_to_one_application():
     """The allowlist is the Dashboard contract and does not identify an application."""
     payload = json.loads(core._DASHBOARD_PATH.read_text(encoding="utf-8"))

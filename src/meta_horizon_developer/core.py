@@ -54,9 +54,26 @@ class EmptyCollectionError(MetaHorizonError):
 
 
 @dataclass(frozen=True)
+class ScrollPage:
+    """A Dashboard page whose table loads more rows as it is scrolled.
+
+    The reviews table has no pager and no period parameter: it holds a GraphQL
+    connection that the Dashboard extends when the scroll container reaches its end.
+    Driving the scroll keeps the Dashboard the party that builds every request, which
+    is the same boundary the analytics pages observe.
+    """
+
+    path: str
+    operation: str
+    connection: tuple[str, ...]
+    max_rounds: int = 60
+
+
+@dataclass(frozen=True)
 class Settings:
     app_id: str
     pages: tuple[str, ...]
+    scroll_pages: tuple[ScrollPage, ...]
     operations: frozenset[str]
     required_operations: frozenset[str]
     # Browser-only locations. Reading snapshots does not need them, so they are
@@ -108,6 +125,18 @@ def load_settings(
     required = frozenset(payload.get("required_operations", operations))
     if not required <= operations:
         raise ValueError("required_operations must be a subset of operations")
+    scroll_pages = tuple(
+        ScrollPage(
+            path=entry["path"],
+            operation=entry["operation"],
+            connection=tuple(entry["connection"]),
+            max_rounds=int(entry.get("max_rounds", 60)),
+        )
+        for entry in payload.get("scroll_pages", ())
+    )
+    outside = {page.operation for page in scroll_pages} - operations
+    if outside:
+        raise ValueError(f"scroll_pages operations must be allow-listed: {sorted(outside)}")
 
     resolved_app_id = app_id or os.environ.get("META_HORIZON_APP_ID")
     if not resolved_app_id:
@@ -126,6 +155,7 @@ def load_settings(
     return Settings(
         app_id=str(resolved_app_id),
         pages=tuple(payload["pages"]),
+        scroll_pages=scroll_pages,
         operations=operations,
         required_operations=required,
         profile_dir=profile,
@@ -161,6 +191,108 @@ def redact(value: Any, key: str = "") -> Any:
     if isinstance(value, str) and len(value) > 10_000:
         return f"{value[:10_000]}…"
     return value
+
+
+def review_node(node: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the review fields that describe the review, not its author.
+
+    Every row the Dashboard returns carries the reviewer's alias and account id, plus a
+    copy of the organization's permission list. None of it is needed to read reviews,
+    and the author names a person, so **drop it before the snapshot is written** instead
+    of relying on `redact()` — the author fields are ordinary keys (`alias`, `id`) that
+    no secret-key pattern would catch.
+    """
+    binary = node.get("rated_binary") or {}
+    response = node.get("developer_response") or {}
+    return {
+        "id": node.get("id"),
+        "date": node.get("date"),
+        "score": node.get("score"),
+        "title": node.get("review_title"),
+        "description": node.get("review_description"),
+        "helpful_count": node.get("review_helpful_count"),
+        "is_down_ranked": node.get("is_down_ranked"),
+        "developer_tags": node.get("developer_tags") or [],
+        "app_version": binary.get("version"),
+        # The developer response is written by the application owner, not the reviewer.
+        "developer_response": response.get("body"),
+        "has_moderation_request": bool(node.get("moderation_request")),
+    }
+
+
+# Scroll every scrollable ancestor, not just the window. The reviews table lives in an
+# inner container, so scrolling the window alone never reaches the end of the list and
+# the Dashboard never asks for the next page.
+_SCROLL_TO_BOTTOM = """() => {
+    document.querySelectorAll('*').forEach(element => {
+        if (element.scrollHeight > element.clientHeight + 20) {
+            element.scrollTop = element.scrollHeight;
+        }
+    });
+    window.scrollTo(0, document.body.scrollHeight);
+}"""
+
+
+def _absorb(
+    state: dict[str, dict[str, Any]],
+    scroll: ScrollPage,
+    payload: dict[str, Any],
+    doc_id: str,
+) -> None:
+    """Merge one page of a scrolled connection into the accumulated rows."""
+    connection: Any = payload.get("data") or {}
+    for key in scroll.connection:
+        connection = (connection or {}).get(key) or {}
+    entry = state.setdefault(
+        scroll.operation, {"rows": {}, "doc_id": doc_id, "has_next_page": False, "responses": 0}
+    )
+    entry["responses"] += 1
+    entry["doc_id"] = doc_id or entry["doc_id"]
+    for edge in connection.get("edges") or []:
+        row = review_node(edge.get("node") or {})
+        if row.get("id") is not None:
+            entry["rows"][str(row["id"])] = redact(row)
+    entry["has_next_page"] = bool((connection.get("page_info") or {}).get("has_next_page"))
+
+
+async def _settle(tasks: set[asyncio.Task[None]]) -> None:
+    """Finish reading pending response bodies **before the page navigates away**.
+
+    Chromium drops a response body once its page is gone, so a handler that has not read
+    it yet fails with "No resource with given identifier found" and that operation is
+    silently lost. Waiting at every navigation keeps a slow response from disappearing.
+    A failure here is tolerated: the operation stays in `missing_operations`, which is
+    the designed way to record a partial collection, rather than ending the whole run.
+    """
+    if tasks:
+        await asyncio.gather(*tuple(tasks), return_exceptions=True)
+
+
+async def _drain(
+    page: Any,
+    scroll: ScrollPage,
+    state: dict[str, dict[str, Any]],
+    tasks: set[asyncio.Task[None]],
+) -> None:
+    """Scroll until the Dashboard stops adding rows, or the round limit is reached.
+
+    Stop after two rounds that add nothing: a single quiet round also happens while a
+    response is still in flight, and treating that as the end truncates the list.
+    """
+    quiet = 0
+    for _ in range(scroll.max_rounds):
+        entry = state.get(scroll.operation)
+        if entry is not None and not entry["has_next_page"]:
+            return
+        before = len(entry["rows"]) if entry else 0
+        await page.evaluate(_SCROLL_TO_BOTTOM)
+        await page.wait_for_timeout(2_000)
+        await _settle(tasks)
+        entry = state.get(scroll.operation)
+        after = len(entry["rows"]) if entry else 0
+        quiet = quiet + 1 if after == before else 0
+        if quiet >= 2:
+            return
 
 
 def _request_meta(request: Request) -> dict[str, str]:
@@ -315,6 +447,8 @@ async def collect(settings: Settings | None = None) -> Path:
     settings.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     assert_app_id_matches(settings)
     captured: dict[str, dict[str, Any]] = {}
+    scrolled: dict[str, dict[str, Any]] = {}
+    scroll_by_operation = {page.operation: page for page in settings.scroll_pages}
     tasks: set[asyncio.Task[None]] = set()
 
     async def capture(response: Any) -> None:
@@ -325,6 +459,12 @@ async def collect(settings: Settings | None = None) -> Path:
         if meta["name"] not in settings.operations:
             return
         payload = await response.json()
+        scroll = scroll_by_operation.get(meta["name"])
+        if scroll is not None:
+            # One scrolled table arrives as many responses; accumulate instead of
+            # overwriting, or only the last page would survive.
+            _absorb(scrolled, scroll, payload, meta["doc_id"])
+            return
         data = redact(payload.get("data"))
         if meta["name"] == "OCDevManageApplicationAnalyticsRootQuery":
             app = (payload.get("data") or {}).get("fetch__Application") or {}
@@ -357,11 +497,39 @@ async def collect(settings: Settings | None = None) -> Path:
                     timeout=60_000,
                 )
                 await page.wait_for_timeout(5_000)
-            if tasks:
-                await asyncio.gather(*tuple(tasks))
+                await _settle(tasks)
+            # Scrolled pages hold no period parameter, so they are opened without the
+            # analytics window and are read by scrolling to the end of the table.
+            for scroll in settings.scroll_pages:
+                await page.goto(
+                    f"{BASE_URL.format(app_id=settings.app_id)}{scroll.path}",
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                await page.wait_for_timeout(5_000)
+                await _settle(tasks)
+                await _drain(page, scroll, scrolled, tasks)
+            await _settle(tasks)
         finally:
             await context.close()
             await playwright.stop()
+
+    for name, entry in scrolled.items():
+        rows = sorted(entry["rows"].values(), key=lambda row: row.get("date") or 0, reverse=True)
+        captured[name] = {
+            "name": name,
+            "doc_id": entry["doc_id"],
+            # A scrolled table is many responses merged into one list, so it is stored
+            # flat rather than as a GraphQL connection. `truncated` records that the
+            # Dashboard still had more rows when the round limit stopped the scroll —
+            # a silently short list would read as "these are all the reviews".
+            "data": {
+                "rows": rows,
+                "truncated": entry["has_next_page"],
+                "response_count": entry["responses"],
+            },
+            "errors": None,
+        }
 
     now = datetime.now(UTC)
     result = {
@@ -453,12 +621,27 @@ def read_operation(name: str, settings: Settings | None = None) -> dict[str, Any
     }
 
 
+def scrolled_row_counts(payload: dict[str, Any] | None) -> dict[str, int]:
+    """Row counts for scrolled tables, so a short collection is visible in `status`.
+
+    A scrolled table can come back partially filled (an expired session, a slow page)
+    while every other operation looks healthy. Counting the rows here makes that
+    visible without reading the whole snapshot.
+    """
+    return {
+        operation["name"]: len(operation["data"]["rows"])
+        for operation in (payload or {}).get("operations", [])
+        if isinstance(operation.get("data"), dict) and "rows" in operation["data"]
+    }
+
+
 def status(settings: Settings | None = None) -> dict[str, Any]:
     settings = settings or load_settings()
     latest = latest_snapshot(settings)
     payload = json.loads(latest.read_text(encoding="utf-8")) if latest else None
     return {
         "app_id": settings.app_id,
+        "scrolled_row_counts": scrolled_row_counts(payload),
         "authenticated_profile_present": bool(
             settings.profile_dir and settings.profile_dir.exists()
         ),

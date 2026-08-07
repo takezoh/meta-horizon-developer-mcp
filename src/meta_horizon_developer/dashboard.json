@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "pages": [
     "analytics/",
     "analytics/benchmarking/",
@@ -9,6 +9,14 @@
     "analytics/subscriptions/",
     "analytics/user-engagement/",
     "analytics/user-demographics/"
+  ],
+  "scroll_pages": [
+    {
+      "path": "reviews/",
+      "operation": "OCDevManageApplicationReviewsTableQuery",
+      "connection": ["node", "user_reviews2"],
+      "max_rounds": 60
+    }
   ],
   "required_operations": [
     "OCDevManageOverviewAnalyticsLifetimeInstallsCardQuery",
@@ -28,6 +36,7 @@
     "OCDevManageUserDemographicsCountryRegionChartCardQuery"
   ],
   "operations": [
+    "OCDevManageApplicationReviewsTableQuery",
     "OCDevManageApplicationAnalyticsRootQuery",
     "OCDevManageOverviewAnalyticsLifetimeCardsQuery",
     "OCDevManageOverviewAnalyticsRealtimeCopiesSoldChartCardQuery",

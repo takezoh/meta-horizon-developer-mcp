@@ -9,8 +9,8 @@ development and change rules, see [`AGENTS.md`](AGENTS.md).
 The bundled `meta-horizon-developer` CLI is for the **collection owner** only (manual
 authentication and scheduled collection).
 
-The collector opens the Analytics page in an authenticated browser, observes only
-successful persisted GraphQL `Query` responses issued by the Dashboard itself, removes
+The collector opens the Analytics and Reviews pages in an authenticated browser, observes
+only successful persisted GraphQL `Query` responses issued by the Dashboard itself, removes
 secrets, and stores immutable JSON. It never constructs and replays requests, performs
 mutations, or fetches arbitrary URLs.
 
@@ -69,6 +69,9 @@ Only four tools are exposed:
 | `meta_horizon_developer_latest_snapshot` | `app_id`, `snapshot_dir` | snapshot metadata (not its payload) |
 | `meta_horizon_developer_read_operation` | `operation_name`, `app_id`, `snapshot_dir` | one allowed Query |
 
+User reviews need no separate tool: read them with `meta_horizon_developer_read_operation`
+using `OCDevManageApplicationReviewsTableQuery`.
+
 **Authentication, arbitrary URLs, arbitrary operations, mutations, and Cookie/token values
 are never exposed.** Authentication is available only through the CLI because it requires
 human interaction.
@@ -88,6 +91,14 @@ human interaction.
   daily series.
 - **Fail when collection captures zero operations.** Do not leave an empty snapshot. Partial
   gaps are recorded in `missing_operations` / `missing_required_operations`.
+- **Finish reading a response before leaving its page.** Chromium discards the body once
+  the page is gone, and a handler that has not read it yet loses that operation silently.
+- **Reviews are read by scrolling, and their authors are dropped before storage.** The
+  reviews table has no pager and no period parameter: it extends its GraphQL connection
+  as the inner container is scrolled, so the collector scrolls until `has_next_page` is
+  false. Every row also carries the reviewer's alias and account id, which name a person
+  and which no secret-key pattern would match, so they are removed at capture time rather
+  than redacted afterwards.
 
 ## Snapshot format
 
@@ -105,15 +116,32 @@ human interaction.
 
 Files are named `meta-store-<UTC>.json`, mode 0600, and are **never overwritten**.
 
+A scrolled table is many responses merged into one operation, so it is stored as a flat
+list instead of a GraphQL connection. `truncated` records that the Dashboard still had
+more rows when the round limit stopped the scroll — without it a short list would read as
+"these are all the reviews".
+
+```json
+{"name": "OCDevManageApplicationReviewsTableQuery", "doc_id": "…", "errors": null,
+ "data": {"rows": [{"id": "…", "date": 1786083632, "score": 5, "title": "…",
+                    "description": "…", "helpful_count": 1, "is_down_ranked": false,
+                    "developer_tags": [], "app_version": "0.1.10283",
+                    "developer_response": "…", "has_moderation_request": false}],
+          "truncated": false, "response_count": 20}}
+```
+
 `dashboard.json` is the contract for the Dashboard pages and allowed operations; it does
 not identify an application. The page layout is shared across applications, so this
-allowlist is shared as well.
+allowlist is shared as well. `pages` are opened with the analytics period; `scroll_pages`
+carry no period and are read by scrolling to the end of their table.
 
 ## Secrets
 
 - Cookies remain only in the dedicated profile; they are not written to configuration or snapshots.
 - Responses are redacted before storage (authorization / cookie / token / session / email /
   user_id / dtsg and similar fields).
+- Review authors are dropped at capture time. Redaction matches key names, and the author
+  arrives under `alias` / `id`, which no pattern would catch.
 - Profiles and snapshots must never be committed to Git.
 
 ## Development

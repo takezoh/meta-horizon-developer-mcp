@@ -21,7 +21,16 @@ Dashboard. It does not construct or replay requests.
 - The MCP surface remains read-only: no mutations, arbitrary URLs, arbitrary operations,
   authentication flows, or cookie/token values are exposed.
 - `dashboard.json` is the allowlist. Every operation must end in `Query`; required operations
-  must be a subset of the allowlist.
+  must be a subset of the allowlist, and every `scroll_pages` operation must appear in it.
+- A table that loads more rows on scroll is read by scrolling, never by replaying its
+  cursor. Accumulate its responses instead of overwriting them, and record `truncated` when
+  the round limit stops the scroll: a silently short list reads as a complete one.
+- Reviews are a diagnostic surface and stay out of `required_operations`. Losing them must
+  not fail an analytics collection.
+- Drop person-identifying columns in the capture handler. `redact()` matches key names, so
+  a review author's `alias` / `id` would pass through it untouched.
+- Settle pending response handlers before every navigation. Chromium discards a response
+  body once its page is gone, and the operation disappears without an error.
 - `app_id` and the snapshot directory are explicit inputs or environment variables.
   Do not add a cwd-dependent default. The profile is required only by the browser entry
   points (`auth` / `collect` / `capture-csv`); do not make read paths depend on it.
