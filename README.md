@@ -152,3 +152,7 @@ uv run --project . ruff check src tests
 ```
 
 The package requires Python 3.13 or newer. Runtime state is intentionally excluded from Git.
+
+### Streamed analytics responses
+
+Collection accepts both a single JSON response and streamed JSON documents, merging deferred data at its GraphQL path before redaction. Malformed responses remain missing operations; report completeness checks must not be relaxed.

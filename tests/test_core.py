@@ -403,3 +403,30 @@ def test_status_reports_the_application_and_the_snapshot(tmp_path):
     assert result["operation_count"] == 1
     assert result["authenticated_profile_present"] is False
     assert result["snapshot_dir"] == str(settings.output_dir)
+
+
+def test_graphql_stream_preserves_initial_and_deferred_fields():
+    text = '\n'.join([
+        json.dumps({"data": {"node": {"series": None, "summary": 3}}}),
+        json.dumps({"path": ["node"], "data": {"series": [1, 2]}, "is_final": True}),
+    ])
+    assert core._graphql_payload(text)["data"] == {"node": {"series": [1, 2], "summary": 3}}
+
+
+def test_graphql_incremental_preserves_errors_and_nested_data():
+    text = json.dumps({"data": {"node": {"count": 4}}, "incremental": [
+        {"path": ["node"], "data": {"chart": [8]}, "errors": [{"message": "partial"}]}
+    ]})
+    result = core._graphql_payload(text)
+    assert result["data"] == {"node": {"count": 4, "chart": [8]}}
+    assert result["errors"] == [{"message": "partial"}]
+
+
+def test_graphql_stream_rejects_malformed_tail():
+    with pytest.raises(json.JSONDecodeError):
+        core._graphql_payload('{"data": {"node": {}}}\nnot-json')
+
+
+def test_graphql_single_document_is_unchanged():
+    payload = {"data": {"node": {"values": [1, 2]}}}
+    assert core._graphql_payload(json.dumps(payload)) == payload

@@ -265,7 +265,9 @@ async def _settle(tasks: set[asyncio.Task[None]]) -> None:
     the designed way to record a partial collection, rather than ending the whole run.
     """
     if tasks:
-        await asyncio.gather(*tuple(tasks), return_exceptions=True)
+        pending = tuple(tasks)
+        await asyncio.gather(*pending, return_exceptions=True)
+        tasks.difference_update(pending)
 
 
 async def _drain(
@@ -441,6 +443,51 @@ async def authenticate(settings: Settings | None = None) -> None:
             await playwright.stop()
 
 
+def _graphql_payload(text: str) -> dict[str, Any]:
+    """Read JSON or streamed JSON documents without losing deferred chart data."""
+    decoder = json.JSONDecoder()
+    documents = []
+    offset = 0
+    while offset < len(text):
+        while offset < len(text) and text[offset].isspace():
+            offset += 1
+        if offset == len(text):
+            break
+        document, offset = decoder.raw_decode(text, offset)
+        if not isinstance(document, dict):
+            raise ValueError("GraphQL response must contain objects")
+        documents.append(document)
+    if not documents:
+        raise ValueError("empty GraphQL response")
+
+    def merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                merge(target[key], value)
+            else:
+                target[key] = value
+
+    result: dict[str, Any] = {"data": {}}
+    errors = []
+    for document in documents:
+        patches = [document, *(document.get("incremental") or [])]
+        for patch in patches:
+            errors.extend(patch.get("errors") or [])
+            data = patch.get("data")
+            if data is None:
+                continue
+            path = patch.get("path") or []
+            target = result["data"]
+            for component in path:
+                target = target[component]
+            if not isinstance(data, dict) or not isinstance(target, dict):
+                raise ValueError("unsupported GraphQL data patch")
+            merge(target, data)
+    if errors:
+        result["errors"] = errors
+    return result
+
+
 async def collect(settings: Settings | None = None) -> Path:
     """Collect successful allow-listed GraphQL Query responses into one snapshot."""
     settings = settings or load_settings()
@@ -458,7 +505,7 @@ async def collect(settings: Settings | None = None) -> Path:
         meta = _request_meta(request)
         if meta["name"] not in settings.operations:
             return
-        payload = await response.json()
+        payload = _graphql_payload(await response.text())
         scroll = scroll_by_operation.get(meta["name"])
         if scroll is not None:
             # One scrolled table arrives as many responses; accumulate instead of
@@ -482,7 +529,7 @@ async def collect(settings: Settings | None = None) -> Path:
     def on_response(response: Any) -> None:
         task = asyncio.create_task(capture(response))
         tasks.add(task)
-        task.add_done_callback(tasks.discard)
+        # Keep completed tasks until _settle retrieves their exceptions.
 
     with profile_lock(settings):
         playwright, context = await _context(settings, headless=True)
@@ -496,7 +543,7 @@ async def collect(settings: Settings | None = None) -> Path:
                     wait_until="domcontentloaded",
                     timeout=60_000,
                 )
-                await page.wait_for_timeout(5_000)
+                await page.wait_for_timeout(10_000)
                 await _settle(tasks)
             # Scrolled pages hold no period parameter, so they are opened without the
             # analytics window and are read by scrolling to the end of the table.
@@ -506,7 +553,7 @@ async def collect(settings: Settings | None = None) -> Path:
                     wait_until="domcontentloaded",
                     timeout=60_000,
                 )
-                await page.wait_for_timeout(5_000)
+                await page.wait_for_timeout(10_000)
                 await _settle(tasks)
                 await _drain(page, scroll, scrolled, tasks)
             await _settle(tasks)
@@ -575,7 +622,7 @@ async def capture_csv(settings: Settings | None = None) -> list[Path]:
     def on_download(download: Any) -> None:
         task = asyncio.create_task(save(download))
         tasks.add(task)
-        task.add_done_callback(tasks.discard)
+        # Keep completed tasks until _settle retrieves their exceptions.
 
     with profile_lock(settings):
         playwright, context = await _context(settings, headless=False)
