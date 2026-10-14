@@ -18,7 +18,7 @@ import re
 import shutil
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -488,11 +488,22 @@ def _graphql_payload(text: str) -> dict[str, Any]:
     return result
 
 
-async def collect(settings: Settings | None = None) -> Path:
+async def collect(settings: Settings | None = None, *, incremental: bool = False) -> Path:
     """Collect successful allow-listed GraphQL Query responses into one snapshot."""
     settings = settings or load_settings()
     settings.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     assert_app_id_matches(settings)
+    today = datetime.now(UTC).date()
+    prior = source = None
+    new_start = today - timedelta(days=settings.lookback_days)
+    request_settings = settings
+    if incremental:
+        from .incremental import plan
+
+        prior, source, new_start = plan(settings, today)
+        if new_start == today:
+            return settings.output_dir / source["filename"]
+        request_settings = replace(settings, lookback_days=(today - new_start).days)
     captured: dict[str, dict[str, Any]] = {}
     scrolled: dict[str, dict[str, Any]] = {}
     scroll_by_operation = {page.operation: page for page in settings.scroll_pages}
@@ -539,7 +550,7 @@ async def collect(settings: Settings | None = None) -> Path:
             today = datetime.now(UTC).date()
             for relative in settings.pages:
                 await page.goto(
-                    page_url(settings, relative, today=today),
+                    page_url(request_settings, relative, today=today),
                     wait_until="domcontentloaded",
                     timeout=60_000,
                 )
@@ -588,6 +599,12 @@ async def collect(settings: Settings | None = None) -> Path:
         "missing_operations": sorted(settings.operations - captured.keys()),
         "missing_required_operations": sorted(settings.required_operations - captured.keys()),
     }
+    if incremental:
+        from .incremental import assemble
+
+        result = assemble(prior, result, source=source,
+                          start=today - timedelta(days=settings.lookback_days),
+                          new_start=new_start, end=today - timedelta(days=1))
     target = settings.output_dir / f"{SNAPSHOT_PREFIX}{now:%Y-%m-%dT%H-%M-%SZ}.json"
     target.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     target.chmod(0o600)

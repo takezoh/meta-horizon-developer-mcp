@@ -65,7 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("status", help="Show auth status and latest snapshot health")
     sub.add_parser("auth", help="Open the dedicated browser for manual login")
-    sub.add_parser("collect", help="Collect allowed Queries into immutable JSON")
+    collect = sub.add_parser("collect", help="Collect allowed Queries into immutable JSON")
+    collect.add_argument("--incremental", action="store_true",
+                         help="Reuse collected daily data and request only new dates")
     sub.add_parser("capture-csv", help="Manually download and save chart CSV files")
     read = sub.add_parser("read", help="Read one operation from the latest snapshot")
     read.add_argument("operation")
@@ -87,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             asyncio.run(core.authenticate(settings))
             return EXIT_OK
         if args.action == "collect":
-            print(asyncio.run(core.collect(settings)))
+            print(asyncio.run(core.collect(settings, incremental=args.incremental)))
             return EXIT_OK
         if args.action == "capture-csv":
             paths = asyncio.run(core.capture_csv(settings))

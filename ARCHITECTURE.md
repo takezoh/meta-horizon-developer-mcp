@@ -85,3 +85,11 @@ they require a human browser session or a download interaction.
 - No mutation or arbitrary GraphQL/API client.
 - No credential manager, token export, or unattended login.
 - No host-specific MCP registration logic inside this package.
+
+### Incremental acquisition boundary (2026-10-09)
+
+`incremental.py` plans the missing suffix of a successful daily request and combines
+only dated series. `core.collect` still lets the Dashboard construct all requests and
+retains the existing profile lock, app-id guard, allowlist and redaction. No request is
+replayed. Undated summaries are never summed or relabeled as full-window values.
+The original snapshot stays immutable and is identified by SHA256 in the assembled input.

@@ -156,3 +156,18 @@ The package requires Python 3.13 or newer. Runtime state is intentionally exclud
 ### Streamed analytics responses
 
 Collection accepts both a single JSON response and streamed JSON documents, merging deferred data at its GraphQL path before redaction. Malformed responses remain missing operations; report completeness checks must not be relaxed.
+
+### Incremental daily collection
+
+Use `collect --incremental` for daily operation. Successful collected dates are reused,
+including dates where the provider returned no values. Dashboard page URLs request only
+new dates. Daily time series are assembled with the original snapshot; `acquisition`
+records the requested range and the reused filename, SHA256 and collection time.
+`collected_at` remains the time of the new acquisition; `assembled_at` records assembly.
+A same-day repeat returns the existing file without opening a browser.
+
+Undated summaries describe the new request window, not the combined history. Lifetime
+cards follow the provider's scope. Reviews have no date cursor in the supported
+Dashboard workflow, so they still scroll to completion. A failed new acquisition does
+not fall back to the older snapshot. Legacy snapshots are adopted only when their
+observed left boundary covers the requested history; otherwise a full bootstrap is needed.
