@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -430,3 +432,25 @@ def test_graphql_stream_rejects_malformed_tail():
 def test_graphql_single_document_is_unchanged():
     payload = {"data": {"node": {"values": [1, 2]}}}
     assert core._graphql_payload(json.dumps(payload)) == payload
+
+
+def test_profile_lock_excludes_another_process_and_releases(tmp_path):
+    settings = _settings(tmp_path)
+    script = """
+import sys
+from meta_horizon_developer import core
+settings = core.load_settings(
+    app_id='1234567890', snapshot_dir=sys.argv[1], profile_dir=sys.argv[2]
+)
+try:
+    with core.profile_lock(settings):
+        pass
+except core.ProfileBusyError:
+    raise SystemExit(23)
+"""
+    command = [sys.executable, "-c", script, str(settings.output_dir), str(settings.profile_dir)]
+    with core.profile_lock(settings):
+        busy = subprocess.run(command, capture_output=True, timeout=10)
+        assert busy.returncode == 23, busy.stderr
+    released = subprocess.run(command, capture_output=True, timeout=10)
+    assert released.returncode == 0, released.stderr

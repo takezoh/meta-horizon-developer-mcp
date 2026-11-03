@@ -11,7 +11,6 @@ arguments or environment variables (ADR: meta-horizon-portable-collector).
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import os
 import re
@@ -381,7 +380,14 @@ def profile_lock(settings: Settings) -> Generator[Path]:
     handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise ProfileBusyError(
                 f"browser profile is already in use: {profile}"
@@ -389,7 +395,10 @@ def profile_lock(settings: Settings) -> Generator[Path]:
         try:
             yield lock_path
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            if os.name == "nt":
+                msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
     finally:
         os.close(handle)
 
