@@ -70,7 +70,16 @@ def plan(settings, today):
         for op in prior.get("operations", [])
         if op.get("name") in settings.required_operations
     ):
-        raise ValueError("latest snapshot acquisition failed; cannot use it as a daily checkpoint")
+        from .core import IncompleteCollectionError
+
+        raise IncompleteCollectionError(
+            missing_operations=tuple(prior.get("missing_required_operations") or ()),
+            errored_operations=tuple(
+                op["name"]
+                for op in prior.get("operations", [])
+                if op.get("name") in settings.required_operations and op.get("errors")
+            ),
+        )
     collected = datetime.fromisoformat(prior["collected_at"].replace("Z", "+00:00"))
     # Legacy snapshots have no requested window. Require observed evidence at the
     # left boundary before adopting their previously successful complete request.
@@ -111,13 +120,19 @@ def plan(settings, today):
     return prior, source, max(start, next_day)
 
 
-def assemble(prior, result, *, source, start, new_start, end):
-    failed = result.get("missing_required_operations") or [
-        op["name"] for op in result["operations"] if op.get("errors")
-    ]
-    if failed:
-        raise ValueError(
-            "Dashboard acquisition failed; old data will not replace the failed request"
+def assemble(prior, result, *, source, start, new_start, end, required_operations=()):
+    missing = tuple(result.get("missing_required_operations") or ())
+    errored = tuple(
+        op["name"]
+        for op in result["operations"]
+        if op["name"] in required_operations and op.get("errors")
+    )
+    if missing or errored:
+        from .core import IncompleteCollectionError
+
+        raise IncompleteCollectionError(
+            missing_operations=missing,
+            errored_operations=errored,
         )
     previous = {op["name"]: op for op in (prior or {}).get("operations", [])}
     for op in result["operations"]:

@@ -42,12 +42,17 @@ cookies.
 4. `collect()` navigates to the allow-listed Dashboard pages. Response handlers accept only
    successful POST responses to the known GraphQL endpoint whose operation is allow-listed.
    Pending handlers are settled before each navigation, because Chromium discards a
-   response body once its page is gone.
+   response body once its page is gone. After the first analytics page settles, a
+   target-app-scoped sidenav permission diagnostic can fail early with
+   `CollectionPermissionError` when a mapped required permission is known to be absent.
 5. Scrolled pages (`scroll_pages`) are then opened without a period and scrolled until the
    connection reports no next page. Their responses are accumulated and deduplicated by row
    id into one flat list, with `truncated` recording a scroll that hit the round limit.
-6. `redact()` removes credential and identity fields, bounds oversized values, and the
-   collector writes one timestamped 0600 snapshot. Empty collections are deleted and fail.
+6. The sidenav diagnostic discards its source payload and errors, retaining only known
+   permission booleans when the target app is present. Missing or errored required Queries
+   raise `IncompleteCollectionError` before any snapshot is written. Otherwise `redact()`
+   bounds and filters captured data before one timestamped 0600 snapshot is written. Zero
+   captured operations still raise `EmptyCollectionError` without writing a snapshot.
 7. `status()` and `read_operation()` read snapshot metadata or one allow-listed operation.
    `status()` also reports scrolled row counts, so a partially loaded table is visible
    without reading the snapshot.
@@ -62,6 +67,7 @@ they require a human browser session or a download interaction.
 | Dashboard → collector | Observe successful allow-listed responses; never replay or synthesize requests. |
 | Browser profile → filesystem | Keep cookies in the dedicated profile; use basic password storage and mode 0700 directories. |
 | Response → snapshot/MCP | Redact secret and identity keys before persistence or return. |
+| Sidenav header → snapshot | Keep only known permission booleans after matching the target app; errors or an unmatched app produce unknown flags. |
 | Review row → snapshot | Keep only fields describing the review. The author (`alias`, `id`) is dropped at capture time, since redaction matches key names and would not catch it. |
 | Caller → settings | Require an explicit application and snapshot directory per call; reject cross-application snapshot directories. |
 | Snapshot → reader | Read only known operations from the latest redacted snapshot; never expose the whole raw payload through MCP. |

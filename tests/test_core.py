@@ -1,4 +1,8 @@
+import asyncio
 import json
+from dataclasses import replace
+from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -48,6 +52,100 @@ def _write_snapshot(settings: core.Settings, *, app_id: str, name: str = "Exampl
     )
 
 
+class _FakeResponse:
+    def __init__(self, name: str, payload: dict):
+        self.url = core.GRAPHQL_URL
+        self.ok = True
+        self.request = SimpleNamespace(
+            method="POST", post_data_json={"operationName": name, "doc_id": "test-doc"}
+        )
+        self._body = json.dumps(payload)
+
+    async def text(self):
+        return self._body
+
+
+class _FakePage:
+    def __init__(self, context):
+        self.context = context
+
+    async def goto(self, url, **_kwargs):
+        marker = f"/applications/{self.context.app_id}/"
+        route = urlsplit(url).path.partition(marker)[2]
+        self.context.goto_paths.append(route)
+        for response in self.context.responses.get(route, ()):
+            for handler in self.context.handlers.get("response", ()):
+                handler(response)
+
+    async def wait_for_timeout(self, _milliseconds):
+        pass
+
+
+class _FakeContext:
+    def __init__(self, app_id: str, responses: dict[str, list[_FakeResponse]]):
+        self.app_id = app_id
+        self.responses = responses
+        self.handlers = {}
+        self.goto_paths = []
+        self.closed = False
+
+    def on(self, event, handler):
+        self.handlers.setdefault(event, []).append(handler)
+
+    async def new_page(self):
+        return _FakePage(self)
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakePlaywright:
+    def __init__(self):
+        self.stopped = False
+
+    async def stop(self):
+        self.stopped = True
+
+
+def _mock_browser(monkeypatch, settings, responses):
+    context = _FakeContext(settings.app_id, responses)
+    playwright = _FakePlaywright()
+
+    async def open_context(*_args, **_kwargs):
+        return playwright, context
+
+    monkeypatch.setattr(core, "_context", open_context)
+    return context, playwright
+
+
+def _sidenav_response(app_id: str, permissions, *, errors=None):
+    node = {
+        "id": "private-organization-id",
+        "name": "Private Organization",
+        "viewer_permissions": permissions,
+        "applications": {
+            "nodes": [{"id": app_id, "name": "Private Application"}],
+        },
+        "members": [{"email": "private@example.test"}],
+    }
+    payload = {"data": {"node": node}}
+    if errors is not None:
+        payload["errors"] = errors
+    return _FakeResponse(core._SIDENAV_HEADER_QUERY, payload)
+
+
+def _required_responses(settings, *, omit=None, error=None):
+    responses = []
+    for name in sorted(settings.required_operations):
+        if name == omit:
+            continue
+        payload = {"data": {"node": {"count": 1}}}
+        if name == error:
+            payload["errors"] = [{"message": "PRIVATE_SERVER_ERROR_TEXT"}]
+        responses.append(_FakeResponse(name, payload))
+    return responses
+
+
 def test_dashboard_contract_contains_only_read_queries_and_all_analytics_sections(tmp_path):
     settings = _settings(tmp_path)
 
@@ -65,6 +163,55 @@ def test_dashboard_contract_contains_only_read_queries_and_all_analytics_section
         "analytics/user-engagement/",
         "analytics/user-demographics/",
     } == set(settings.pages)
+
+    assert "OCDevManageApplicationSidenavHeaderQuery" in settings.operations
+    assert settings.operation_permissions == {
+        "OCDevManageOverviewAnalyticsLifetimeInstallsCardQuery": frozenset(
+            {"FINANCE_ANALYTICS"}
+        ),
+        "OCDevManageOverviewAnalyticsRealtimeInstallsChartCardQuery": frozenset(
+            {"FINANCE_ANALYTICS"}
+        ),
+        "OCDevManageRevenueRealTimeAnalyticsTotalRevenueChartQuery": frozenset(
+            {"FINANCE_ANALYTICS"}
+        ),
+    }
+
+
+def test_load_settings_rejects_permission_mapping_outside_allowlist(tmp_path):
+    dashboard = tmp_path / "dashboard.json"
+    dashboard.write_text(
+        json.dumps(
+            {
+                "pages": ["analytics/"],
+                "operations": ["GoodQuery"],
+                "operation_permissions": {"AbsentQuery": ["FINANCE_ANALYTICS"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="operation_permissions operations must be allow-listed"):
+        core.load_settings(app_id=APP_ID, dashboard_path=dashboard, snapshot_dir=tmp_path)
+
+
+def test_permission_diagnostic_is_scoped_to_the_target_app_and_known_flags():
+    payload = json.loads(_sidenav_response(APP_ID, ["ANALYTICS"])._body)
+
+    assert core._sidenav_permissions(payload, APP_ID) == {
+        "ANALYTICS": True,
+        "FINANCE_ANALYTICS": False,
+    }
+    assert core._sidenav_permissions(payload, "another-app") == {
+        "ANALYTICS": None,
+        "FINANCE_ANALYTICS": None,
+    }
+    assert core._sidenav_permissions(
+        {**payload, "errors": [{"message": "private error"}]}, APP_ID
+    ) == {"ANALYTICS": None, "FINANCE_ANALYTICS": None}
+    assert core._sidenav_permissions(
+        {"data": {"node": {"applications": {"nodes": [{"id": APP_ID}]}}}}, APP_ID
+    ) == {"ANALYTICS": None, "FINANCE_ANALYTICS": None}
 
 
 def test_reviews_are_collected_by_scrolling_and_not_as_a_period_page(tmp_path):
@@ -102,6 +249,223 @@ def test_reviews_are_not_required_so_a_missing_table_cannot_block_analytics(tmp_
     settings = _settings(tmp_path)
 
     assert "OCDevManageApplicationReviewsTableQuery" not in settings.required_operations
+
+
+def test_known_finance_denial_fails_after_the_first_page_and_closes_browser(
+    tmp_path, monkeypatch
+):
+    settings = replace(
+        _settings(tmp_path), pages=("analytics/", "analytics/revenue/"), scroll_pages=()
+    )
+    _write_snapshot(settings, app_id=APP_ID)
+    existing = list(settings.output_dir.glob("meta-store-*.json"))
+    existing_bytes = {path: path.read_bytes() for path in existing}
+    context, playwright = _mock_browser(
+        monkeypatch,
+        settings,
+        {"analytics/": [_sidenav_response(APP_ID, ["ANALYTICS"])]},
+    )
+
+    with pytest.raises(core.CollectionPermissionError) as caught:
+        asyncio.run(core.collect(settings))
+
+    assert set(caught.value.blocked_operations) == set(settings.operation_permissions)
+    assert "FINANCE_ANALYTICS" in str(caught.value)
+    assert all(name in str(caught.value) for name in settings.operation_permissions)
+    assert "Private Organization" not in str(caught.value)
+    assert context.goto_paths == ["analytics/"]
+    assert context.closed and playwright.stopped
+    assert list(settings.output_dir.glob("meta-store-*.json")) == existing
+    assert {path: path.read_bytes() for path in existing} == existing_bytes
+
+
+def test_optional_operation_permission_cannot_block_required_collection(tmp_path, monkeypatch):
+    settings = replace(
+        _settings(tmp_path),
+        pages=("analytics/",),
+        scroll_pages=(),
+        operation_permissions={
+            "OCDevManageApplicationReviewsTableQuery": frozenset({"FINANCE_ANALYTICS"})
+        },
+    )
+    responses = [_sidenav_response(APP_ID, ["ANALYTICS"]), *_required_responses(settings)]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    snapshot = asyncio.run(core.collect(settings))
+
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert payload["missing_required_operations"] == []
+
+
+def test_sidenav_snapshot_discards_errors_and_unrelated_payload(tmp_path, monkeypatch):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    diagnostic = _sidenav_response(
+        APP_ID,
+        ["ANALYTICS", "FINANCE_ANALYTICS"],
+        errors=[{"message": "PRIVATE_SERVER_ERROR_TEXT"}],
+    )
+    responses = [diagnostic, *_required_responses(settings)]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    snapshot = asyncio.run(core.collect(settings))
+
+    text = snapshot.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    entry = next(
+        operation
+        for operation in payload["operations"]
+        if operation["name"] == core._SIDENAV_HEADER_QUERY
+    )
+    assert entry["data"] == {
+        "permissions": {"ANALYTICS": None, "FINANCE_ANALYTICS": None}
+    }
+    assert entry["errors"] is None
+    assert all(
+        secret not in text
+        for secret in (
+            "Private Organization",
+            "private-organization-id",
+            "Private Application",
+            "private@example.test",
+            "PRIVATE_SERVER_ERROR_TEXT",
+        )
+    )
+
+
+def test_granted_finance_permission_collects_required_queries_and_sanitizes_diagnostic(
+    tmp_path, monkeypatch
+):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    responses = [
+        _sidenav_response(APP_ID, ["ANALYTICS", "FINANCE_ANALYTICS"]),
+        *_required_responses(settings),
+    ]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    snapshot = asyncio.run(core.collect(settings))
+
+    text = snapshot.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    diagnostic = next(
+        operation
+        for operation in payload["operations"]
+        if operation["name"] == core._SIDENAV_HEADER_QUERY
+    )
+    assert payload["missing_required_operations"] == []
+    assert diagnostic["data"] == {
+        "permissions": {"ANALYTICS": True, "FINANCE_ANALYTICS": True}
+    }
+    assert diagnostic["errors"] is None
+    assert all(
+        secret not in text
+        for secret in (
+            "Private Organization",
+            "private-organization-id",
+            "private@example.test",
+        )
+    )
+
+
+def test_unmatched_app_diagnostic_is_unknown_and_does_not_block_collection(
+    tmp_path, monkeypatch
+):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    responses = [
+        _sidenav_response("another-app", ["ANALYTICS"]),
+        *_required_responses(settings),
+    ]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    snapshot = asyncio.run(core.collect(settings))
+
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    diagnostic = next(
+        operation
+        for operation in payload["operations"]
+        if operation["name"] == core._SIDENAV_HEADER_QUERY
+    )
+    assert payload["missing_required_operations"] == []
+    assert diagnostic["data"] == {
+        "permissions": {"ANALYTICS": None, "FINANCE_ANALYTICS": None}
+    }
+
+
+def test_missing_required_query_does_not_write_a_snapshot(tmp_path, monkeypatch):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    _write_snapshot(settings, app_id=APP_ID)
+    existing = list(settings.output_dir.glob("meta-store-*.json"))
+    existing_bytes = {path: path.read_bytes() for path in existing}
+    missing = sorted(settings.required_operations)[0]
+    responses = [
+        _sidenav_response(APP_ID, ["ANALYTICS", "FINANCE_ANALYTICS"]),
+        *_required_responses(settings, omit=missing),
+    ]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    with pytest.raises(core.IncompleteCollectionError) as caught:
+        asyncio.run(core.collect(settings))
+
+    assert caught.value.missing_operations == (missing,)
+    assert caught.value.errored_operations == ()
+    assert list(settings.output_dir.glob("meta-store-*.json")) == existing
+    assert {path: path.read_bytes() for path in existing} == existing_bytes
+
+
+def test_required_graphql_error_does_not_write_or_expose_response_text(tmp_path, monkeypatch):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    _write_snapshot(settings, app_id=APP_ID)
+    existing = list(settings.output_dir.glob("meta-store-*.json"))
+    existing_bytes = {path: path.read_bytes() for path in existing}
+    errored = sorted(settings.required_operations)[0]
+    responses = [
+        _sidenav_response(APP_ID, ["ANALYTICS", "FINANCE_ANALYTICS"]),
+        *_required_responses(settings, error=errored),
+    ]
+    _mock_browser(monkeypatch, settings, {"analytics/": responses})
+
+    with pytest.raises(core.IncompleteCollectionError) as caught:
+        asyncio.run(core.collect(settings))
+
+    assert caught.value.missing_operations == ()
+    assert caught.value.errored_operations == (errored,)
+    assert "PRIVATE_SERVER_ERROR_TEXT" not in str(caught.value)
+    assert list(settings.output_dir.glob("meta-store-*.json")) == existing
+    assert {path: path.read_bytes() for path in existing} == existing_bytes
+
+
+def test_zero_captured_operations_still_raise_empty_collection_error(tmp_path, monkeypatch):
+    settings = replace(_settings(tmp_path), pages=("analytics/",), scroll_pages=())
+    _mock_browser(monkeypatch, settings, {})
+
+    with pytest.raises(core.EmptyCollectionError):
+        asyncio.run(core.collect(settings))
+
+    assert list(settings.output_dir.glob("meta-store-*.json")) == []
+
+
+def test_cli_returns_runtime_error_for_collection_permission_failure(tmp_path, monkeypatch, capsys):
+    from meta_horizon_developer import cli
+
+    async def fail_collection(*_args, **_kwargs):
+        raise core.CollectionPermissionError(
+            {"RequiredQuery": ("FINANCE_ANALYTICS",)}
+        )
+
+    monkeypatch.setattr(core, "collect", fail_collection)
+    result = cli.main(
+        [
+            "--app-id",
+            APP_ID,
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--profile-dir",
+            str(tmp_path / "profile"),
+            "collect",
+        ]
+    )
+
+    assert result == cli.EXIT_RUNTIME
+    assert "CollectionPermissionError" in capsys.readouterr().err
 
 
 def test_review_node_drops_the_author_and_keeps_the_review(tmp_path):

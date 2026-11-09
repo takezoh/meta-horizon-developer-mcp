@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "pages": [
     "analytics/",
     "analytics/benchmarking/",
@@ -35,8 +35,14 @@
     "OCDevManageUserDemographicsAgeChartCardQuery",
     "OCDevManageUserDemographicsCountryRegionChartCardQuery"
   ],
+  "operation_permissions": {
+    "OCDevManageOverviewAnalyticsLifetimeInstallsCardQuery": ["FINANCE_ANALYTICS"],
+    "OCDevManageOverviewAnalyticsRealtimeInstallsChartCardQuery": ["FINANCE_ANALYTICS"],
+    "OCDevManageRevenueRealTimeAnalyticsTotalRevenueChartQuery": ["FINANCE_ANALYTICS"]
+  },
   "operations": [
     "OCDevManageApplicationReviewsTableQuery",
+    "OCDevManageApplicationSidenavHeaderQuery",
     "OCDevManageApplicationAnalyticsRootQuery",
     "OCDevManageOverviewAnalyticsLifetimeCardsQuery",
     "OCDevManageOverviewAnalyticsRealtimeCopiesSoldChartCardQuery",

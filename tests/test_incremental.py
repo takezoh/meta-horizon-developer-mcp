@@ -43,7 +43,7 @@ def test_merge_preserves_missing_dates_and_series_identity():
 
 def test_required_failure_never_falls_back():
     result = {"operations": [], "missing_required_operations": ["DailyQuery"]}
-    with pytest.raises(ValueError, match="acquisition failed"):
+    with pytest.raises(core.IncompleteCollectionError, match="missing required Queries"):
         assemble(
             {},
             result,
@@ -52,6 +52,26 @@ def test_required_failure_never_falls_back():
             new_start=date(2026, 10, 2),
             end=date(2026, 10, 2),
         )
+
+
+def test_optional_graphql_errors_do_not_fail_incremental_analytics():
+    result = {
+        "operations": [{"name": "ReviewsQuery", "errors": [{"message": "optional"}]}],
+        "missing_required_operations": [],
+        "collected_at": "2026-10-03T00:00:00Z",
+    }
+
+    assembled = assemble(
+        None,
+        result,
+        source=None,
+        start=date(2026, 10, 1),
+        new_start=date(2026, 10, 2),
+        end=date(2026, 10, 2),
+        required_operations={"DailyQuery"},
+    )
+
+    assert assembled["operations"][0]["name"] == "ReviewsQuery"
 
 
 def test_plan_uses_successful_requested_dates_not_last_nonempty_date(tmp_path):

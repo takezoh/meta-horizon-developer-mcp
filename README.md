@@ -65,15 +65,28 @@ preserving its schedule and other jobs. The corrected command reached browser co
 but incremental acquisition still failed: required install and revenue Queries were
 missing. Fixing the executable path alone did not restore complete data.
 
-Also check the collection account's team permissions. An authenticated profile with
-ordinary Analytics access can still lack financial analytics: the Revenue page may be
-unavailable and its Query never emitted. Meta requires **Finance Analytics** permission
-for Revenue and Add-on Content analytics; a team administrator must grant it to the
-collection account. See [Meta's analytics permissions documentation](https://developers.meta.com/vr/resources/publish-analytics-intro/).
-Do not remove missing Queries from `required_operations` or reuse old data as evidence
-of a successful acquisition. After permission changes, run collection again and verify
-that `missing_required_operation_count` is zero. Authentication itself remains a manual
-CLI operation.
+Also check the collection account's team permissions. Static Dashboard modules show
+that `OCDevManageOverviewAnalyticsLifetimeInstallsCardQuery`,
+`OCDevManageOverviewAnalyticsRealtimeInstallsChartCardQuery`, and
+`OCDevManageRevenueRealTimeAnalyticsTotalRevenueChartQuery` are all gated by **Finance
+Analytics**. The overview hides both installs cards when that permission is absent, and
+the revenue route declares the same permission; these are not renamed or missing URL
+paths. A team administrator must grant Finance Analytics to the collection account.
+See [Meta's analytics permissions documentation](https://developers.meta.com/vr/resources/publish-analytics-intro/).
+
+The collector uses the Dashboard's optional sidenav header Query as a scoped diagnostic.
+It trusts the permission flags only when the target app appears in the response, and
+stores only the `ANALYTICS` / `FINANCE_ANALYTICS` booleans. Unknown scope or GraphQL
+errors become unknown flags; response errors and organization, member, and application
+details are discarded. A confirmed denial raises `CollectionPermissionError` after the
+first analytics page settles. If permission evidence is unavailable, a required Query
+that is missing or returns GraphQL errors raises `IncompleteCollectionError`. Both paths
+leave the previous snapshot intact and write no new snapshot. The CLI exits with status 1;
+MCP reports a tool error. Do not remove required Queries or treat an old snapshot as new acquisition
+evidence. After an administrator grants permission, run collection again and verify
+that `missing_required_operation_count` is zero. The code-side correction does not grant
+permission or recover the missing live data. Authentication remains a manual CLI
+operation.
 
 ## MCP
 
@@ -124,8 +137,9 @@ human interaction.
 - **The aggregation period comes from URL `start` / `end`.** Presets allow at most 28 days,
   so a custom period (default: 120 days) is passed to the Dashboard to produce a longer
   daily series.
-- **Fail when collection captures zero operations.** Do not leave an empty snapshot. Partial
-  gaps are recorded in `missing_operations` / `missing_required_operations`.
+- **Fail before writing when required collection is incomplete.** Missing required Queries
+  and required GraphQL errors raise a typed error; the latest successful snapshot stays
+  intact. Missing optional Queries remain visible in `missing_operations`.
 - **Finish reading a response before leaving its page.** Chromium discards the body once
   the page is gone, and a handler that has not read it yet loses that operation silently.
 - **Reviews are read by scrolling, and their authors are dropped before storage.** The

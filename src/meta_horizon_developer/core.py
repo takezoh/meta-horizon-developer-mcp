@@ -18,7 +18,7 @@ import re
 import shutil
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -53,6 +53,46 @@ class EmptyCollectionError(MetaHorizonError):
     """No allow-listed Query was captured; the session is most likely expired."""
 
 
+class CollectionPermissionError(MetaHorizonError):
+    """A known Dashboard permission blocks required analytics Queries."""
+
+    def __init__(self, blocked_operations: dict[str, tuple[str, ...]]) -> None:
+        self.blocked_operations = {
+            name: tuple(sorted(permissions))
+            for name, permissions in sorted(blocked_operations.items())
+        }
+        details = "; ".join(
+            f"{name}: {', '.join(permissions)}"
+            for name, permissions in self.blocked_operations.items()
+        )
+        super().__init__(f"collection requires additional Dashboard permissions: {details}")
+
+
+class IncompleteCollectionError(MetaHorizonError):
+    """A required Query was missing or returned GraphQL errors."""
+
+    def __init__(
+        self,
+        *,
+        missing_operations: tuple[str, ...] = (),
+        errored_operations: tuple[str, ...] = (),
+    ) -> None:
+        self.missing_operations = tuple(sorted(missing_operations))
+        self.errored_operations = tuple(sorted(errored_operations))
+        details = []
+        if self.missing_operations:
+            details.append("missing required Queries: " + ", ".join(self.missing_operations))
+        if self.errored_operations:
+            details.append("required Queries returned GraphQL errors: " + ", ".join(
+                self.errored_operations
+            ))
+        super().__init__("Dashboard collection incomplete; " + "; ".join(details))
+
+
+_SIDENAV_HEADER_QUERY = "OCDevManageApplicationSidenavHeaderQuery"
+_KNOWN_VIEWER_PERMISSIONS = ("ANALYTICS", "FINANCE_ANALYTICS")
+
+
 @dataclass(frozen=True)
 class ScrollPage:
     """A Dashboard page whose table loads more rows as it is scrolled.
@@ -85,6 +125,7 @@ class Settings:
     # Dashboard lookback period. The default (28 days) is too short for the analytics
     # collection window of 120 days, leaving only a few periods in the store.
     lookback_days: int = 120
+    operation_permissions: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _required(value: Path | str | None, env_name: str, flag: str) -> Path:
@@ -125,6 +166,12 @@ def load_settings(
     required = frozenset(payload.get("required_operations", operations))
     if not required <= operations:
         raise ValueError("required_operations must be a subset of operations")
+    operation_permissions = {
+        name: frozenset(permissions)
+        for name, permissions in payload.get("operation_permissions", {}).items()
+    }
+    if not operation_permissions.keys() <= operations:
+        raise ValueError("operation_permissions operations must be allow-listed")
     scroll_pages = tuple(
         ScrollPage(
             path=entry["path"],
@@ -158,6 +205,7 @@ def load_settings(
         scroll_pages=scroll_pages,
         operations=operations,
         required_operations=required,
+        operation_permissions=operation_permissions,
         profile_dir=profile,
         output_dir=Path(output),
         csv_dir=csv,
@@ -218,6 +266,32 @@ def review_node(node: dict[str, Any]) -> dict[str, Any]:
         "developer_response": response.get("body"),
         "has_moderation_request": bool(node.get("moderation_request")),
     }
+
+
+def _sidenav_permissions(payload: dict[str, Any], app_id: str) -> dict[str, bool | None]:
+    """Return only known permission flags when the response identifies this app."""
+    unknown = dict.fromkeys(_KNOWN_VIEWER_PERMISSIONS)
+    if payload.get("errors"):
+        return unknown
+    data = payload.get("data")
+    node = data.get("node") if isinstance(data, dict) else None
+    if not isinstance(node, dict):
+        return unknown
+    application_connection = node.get("applications")
+    applications = (
+        application_connection.get("nodes")
+        if isinstance(application_connection, dict)
+        else None
+    )
+    if not isinstance(applications, list) or not any(
+        isinstance(application, dict) and str(application.get("id")) == app_id
+        for application in applications
+    ):
+        return unknown
+    permissions = node.get("viewer_permissions")
+    if not isinstance(permissions, list) or any(not isinstance(item, str) for item in permissions):
+        return unknown
+    return {name: name in permissions for name in _KNOWN_VIEWER_PERMISSIONS}
 
 
 # Scroll every scrollable ancestor, not just the window. The reviews table lives in an
@@ -517,6 +591,16 @@ async def collect(settings: Settings | None = None, *, incremental: bool = False
         if meta["name"] not in settings.operations:
             return
         payload = _graphql_payload(await response.text())
+        if meta["name"] == _SIDENAV_HEADER_QUERY:
+            # This diagnostic may contain organization, membership and application
+            # details. Persist only permission flags after confirming the target app.
+            captured[meta["name"]] = {
+                "name": meta["name"],
+                "doc_id": meta["doc_id"],
+                "data": {"permissions": _sidenav_permissions(payload, settings.app_id)},
+                "errors": None,
+            }
+            return
         scroll = scroll_by_operation.get(meta["name"])
         if scroll is not None:
             # One scrolled table arrives as many responses; accumulate instead of
@@ -548,7 +632,7 @@ async def collect(settings: Settings | None = None, *, incremental: bool = False
         try:
             page = await context.new_page()
             today = datetime.now(UTC).date()
-            for relative in settings.pages:
+            for index, relative in enumerate(settings.pages):
                 await page.goto(
                     page_url(request_settings, relative, today=today),
                     wait_until="domcontentloaded",
@@ -556,6 +640,23 @@ async def collect(settings: Settings | None = None, *, incremental: bool = False
                 )
                 await page.wait_for_timeout(10_000)
                 await _settle(tasks)
+                if index == 0:
+                    diagnostic = captured.get(_SIDENAV_HEADER_QUERY)
+                    permissions = (
+                        diagnostic.get("data", {}).get("permissions", {}) if diagnostic else {}
+                    )
+                    blocked = {
+                        name: tuple(
+                            permission
+                            for permission in required_permissions
+                            if permissions.get(permission) is False
+                        )
+                        for name, required_permissions in settings.operation_permissions.items()
+                        if name in settings.required_operations
+                    }
+                    blocked = {name: values for name, values in blocked.items() if values}
+                    if blocked:
+                        raise CollectionPermissionError(blocked)
             # Scrolled pages hold no period parameter, so they are opened without the
             # analytics window and are read by scrolling to the end of the table.
             for scroll in settings.scroll_pages:
@@ -599,20 +700,31 @@ async def collect(settings: Settings | None = None, *, incremental: bool = False
         "missing_operations": sorted(settings.operations - captured.keys()),
         "missing_required_operations": sorted(settings.required_operations - captured.keys()),
     }
+    if not captured:
+        raise EmptyCollectionError(
+            "no analytics Query was captured; run auth and verify the session"
+        )
+    missing_required = tuple(result["missing_required_operations"])
+    errored_required = tuple(
+        operation["name"]
+        for operation in captured.values()
+        if operation["name"] in settings.required_operations and operation.get("errors")
+    )
+    if missing_required or errored_required:
+        raise IncompleteCollectionError(
+            missing_operations=missing_required,
+            errored_operations=errored_required,
+        )
     if incremental:
         from .incremental import assemble
 
         result = assemble(prior, result, source=source,
                           start=today - timedelta(days=settings.lookback_days),
-                          new_start=new_start, end=today - timedelta(days=1))
+                          new_start=new_start, end=today - timedelta(days=1),
+                          required_operations=settings.required_operations)
     target = settings.output_dir / f"{SNAPSHOT_PREFIX}{now:%Y-%m-%dT%H-%M-%SZ}.json"
     target.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     target.chmod(0o600)
-    if not captured:
-        target.unlink(missing_ok=True)
-        raise EmptyCollectionError(
-            "no analytics Query was captured; run auth and verify the session"
-        )
     return target
 
 
