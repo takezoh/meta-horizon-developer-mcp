@@ -1,0 +1,16 @@
+# Collection-owner template. Replace ALL placeholders before installing.
+# Merge with crontab -e; do not replace the owner's other jobs.
+# The executable and directories must exist on the scheduler host, not just
+# inside an agent's workspace. Update these paths after moving a checkout.
+SHELL=/bin/sh
+CRON_TZ=Asia/Tokyo
+PATH=/absolute/path/to/uv/bin:/usr/local/bin:/usr/bin:/bin
+META_HORIZON_CLI=/absolute/path/to/meta-horizon-developer-mcp/bin/meta-horizon-developer
+META_HORIZON_APP_ID=APP_ID
+META_HORIZON_OUTPUT_DIR=/absolute/path/to/snapshots
+META_HORIZON_PROFILE_DIR=/absolute/path/to/dedicated-profile
+META_HORIZON_LOG=/absolute/path/to/collection.log
+
+# Weekdays, 11:30 and 17:30 JST. The CLI owns the exclusive profile lock.
+# A failed incremental acquisition exits nonzero; old data is not substituted.
+30 11,17 * * 1-5 "$META_HORIZON_CLI" collect --incremental >> "$META_HORIZON_LOG" 2>&1

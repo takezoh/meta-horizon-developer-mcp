@@ -18,10 +18,12 @@ mutations, or fetches arbitrary URLs.
 
 ```bash
 # 1. Log in manually (cookies remain in the dedicated Chromium profile).
-meta-horizon-developer --app-id <APP_ID> --profile-dir .state/meta-horizon-developer/profile auth
+meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store \
+  --profile-dir .state/meta-horizon-developer/profile auth
 
 # 2. Collect data (cron-friendly; writes one immutable JSON file).
-meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store collect
+meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store \
+  --profile-dir .state/meta-horizon-developer/profile collect
 
 # 3. Check status.
 meta-horizon-developer --app-id <APP_ID> --snapshot-dir data/raw/meta-store status
@@ -39,6 +41,39 @@ CLI arguments can also be supplied through environment variables.
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE` | Chromium executable | browser operations |
 
 Reading a snapshot never needs a profile: `status` and `read` resolve without one.
+
+### Scheduled collection and recovery
+
+Use [`ops/collection.crontab.example`](ops/collection.crontab.example) as a starting
+point for the collection owner's cron configuration. Replace every placeholder with
+the actual application and absolute paths on that host. Include the directory containing
+`uv` in `PATH`. Keep the installed configuration outside the repository; profiles, cookies,
+logs, and snapshots remain runtime data. Merge the collection entry into `crontab -e`
+without replacing unrelated jobs.
+
+After moving a checkout, update the executable path in cron as well. A stale path can
+stop collection before Python starts, leaving the collector itself and its tests healthy.
+Check `crontab -l`, verify that the configured executable exists and is executable, and
+run that exact command with the same environment from an unrelated directory. For a
+caller-owned collection-and-registration wrapper, use its actual absolute path and keep
+the registration step in the caller project.
+
+On 2026-11-09, the collection owner's job still referenced the absent
+`/workspace/data-analysis/tools/meta-horizon-collect.sh`. The host correction changed only
+that entry to the existing `/mnt/d/ops/data-analysis/tools/meta-horizon-collect.sh`,
+preserving its schedule and other jobs. The corrected command reached browser collection,
+but incremental acquisition still failed: required install and revenue Queries were
+missing. Fixing the executable path alone did not restore complete data.
+
+Also check the collection account's team permissions. An authenticated profile with
+ordinary Analytics access can still lack financial analytics: the Revenue page may be
+unavailable and its Query never emitted. Meta requires **Finance Analytics** permission
+for Revenue and Add-on Content analytics; a team administrator must grant it to the
+collection account. See [Meta's analytics permissions documentation](https://developers.meta.com/vr/resources/publish-analytics-intro/).
+Do not remove missing Queries from `required_operations` or reuse old data as evidence
+of a successful acquisition. After permission changes, run collection again and verify
+that `missing_required_operation_count` is zero. Authentication itself remains a manual
+CLI operation.
 
 ## MCP
 
